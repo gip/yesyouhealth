@@ -1,0 +1,55 @@
+# Phala deployment compose. Must stay fully self-contained: Phala accepts ONE
+# compose file (~200KB max) with no external references. Put NO secrets here —
+# DEID_IMAGE, registry credentials, and any config arrive via the encrypted
+# env file (`phala cvms create ... -e .env` / `phala deploy -e`).
+#
+# Phala pulls a prebuilt image from a registry; it does NOT build. Push the
+# image first with ./build-and-push.sh.
+#
+# SIZING WARNING: qwen3:30b needs ~19GB of RAM plus ~18GB of disk for the
+# model download. The historical CVM size (--vcpu 1 --memory 4096) CANNOT run
+# it — provision something like `--vcpu 16 --memory 49152` with enough disk
+# for the ollama-models volume, or set OLLAMA_MODEL to a smaller model (e.g.
+# qwen3:4b) on constrained CVMs. Even sized correctly, CPU inference on a 30B
+# model is slow; tune OLLAMA_TIMEOUT accordingly. If the model can't load,
+# the service still boots and serves via the rules engine.
+services:
+  deid:
+    image: gipp/deid-service:latest
+    ports:
+      - "8000:8000"
+    environment:
+      AGE_STRATEGY: ${AGE_STRATEGY:-fixed_30}
+      SCRUB_FREETEXT: ${SCRUB_FREETEXT:-false}
+      RETURN_MAP: ${RETURN_MAP:-false}
+      DEID_ENGINE: ${DEID_ENGINE:-llm}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300}
+    volumes:
+      # dstack guest-agent socket so /attestation can return a real RA quote.
+      # NOTE: confirm the exact socket path/name against current Phala/dstack
+      # docs — the Tappd-era /var/run/tappd.sock was renamed in newer dstack;
+      # mount whatever the installed dstack-sdk expects (default below).
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    depends_on:
+      ollama:
+        # service_started, NOT service_healthy: deid must boot and degrade
+        # to the rules engine even when ollama is sick.
+        condition: service_started
+    restart: always
+
+  ollama:
+    image: ollama/ollama:0.9.6 # pin >= 0.9 for the "think" flag
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: always
+
+volumes:
+  ollama-models:
