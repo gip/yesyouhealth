@@ -98,6 +98,7 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
   const [status, setStatus] = useState<ExportStatus>("validating");
   const [error, setError] = useState<string>();
   const [progress, setProgress] = useState<ImportProgress>();
+  const [jobStatus, setJobStatus] = useState<string>();
   const [creatingKey, setCreatingKey] = useState(false);
 
   useEffect(() => {
@@ -207,14 +208,18 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
       try {
         setStatus("deidentifying");
         await generateStudy({
-          onProgress: (stage) =>
-            setStatus(stage === "deidentifying" ? "deidentifying" : "summarizing"),
+          onProgress: (update) => {
+            setStatus(update.stage === "deidentifying" ? "deidentifying" : "summarizing");
+            setJobStatus(update.jobStatus);
+          },
         });
         setStatus("complete");
         router.replace("/study");
       } catch {
         setStatus("complete");
         router.replace("/explore");
+      } finally {
+        setJobStatus(undefined);
       }
     } catch (caught) {
       if (stagedImportId) {
@@ -277,6 +282,16 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
                   : ""}
                 {" · "}
                 {progress.completedSearches}/{progress.totalSearches} searches
+              </p>
+            ) : null}
+            {status === "deidentifying" || status === "summarizing" ? (
+              <p className="import-progress" aria-live="polite">
+                {jobStatus === "queued"
+                  ? "Job queued — waiting for a worker"
+                  : jobStatus === "running"
+                    ? "Job running"
+                    : "Submitting job"}
+                {" · status checked every 3 seconds"}
               </p>
             ) : null}
           </>

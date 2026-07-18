@@ -33,11 +33,19 @@ export interface StudyComment {
   createdAt: string;
 }
 
+export interface DeidRecordResult {
+  // The scrubbed FHIR Bundle returned by the deid job.
+  resource: unknown;
+  // Which engine produced it: "llm" | "rules".
+  engine?: string;
+}
+
 export interface StudyRecord {
   id: string;
   importId: string;
   createdAt: string;
   model?: string;
+  deid?: DeidRecordResult;
   study: LongitudinalStudy;
   comments: StudyComment[];
 }

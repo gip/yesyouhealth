@@ -16,7 +16,12 @@ import {
   type EncryptionMetadata,
 } from "@/lib/browser-encryption";
 import type { BinaryAttachment, JsonObject } from "@/lib/epic";
-import type { LongitudinalStudy, StudyComment, StudyRecord } from "@/lib/study";
+import type {
+  DeidRecordResult,
+  LongitudinalStudy,
+  StudyComment,
+  StudyRecord,
+} from "@/lib/study";
 
 const DATABASE_NAME = "yesyou-health";
 const DATABASE_VERSION = 4;
@@ -697,7 +702,7 @@ async function putStudyRecord(record: StudyRecord): Promise<void> {
 
 export async function storeStudy(
   study: LongitudinalStudy,
-  model?: string,
+  extras?: { model?: string; deid?: DeidRecordResult },
 ): Promise<StudyRecord> {
   const database = await openDatabase();
   let importId: string | undefined;
@@ -712,7 +717,8 @@ export async function storeStudy(
     id: crypto.randomUUID(),
     importId,
     createdAt: new Date().toISOString(),
-    ...(model ? { model } : {}),
+    ...(extras?.model ? { model: extras.model } : {}),
+    ...(extras?.deid ? { deid: extras.deid } : {}),
     study,
     comments: [],
   };

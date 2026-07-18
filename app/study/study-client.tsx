@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { StoragePassphraseForm } from "@/app/storage-passphrase-form";
 import {
@@ -10,18 +10,34 @@ import {
   unlockHealthExport,
   updateStudyComments,
 } from "@/lib/browser-storage";
-import { generateStudy, type StudyProgress } from "@/lib/study-pipeline";
+import {
+  generateStudy,
+  type StudyProgressUpdate,
+  type StudyStage,
+} from "@/lib/study-pipeline";
 import {
   STUDY_CATEGORY_LABELS,
+  type DeidRecordResult,
   type StudyComment,
   type StudyRecord,
 } from "@/lib/study";
 
-const STAGE_COPY: Record<StudyProgress, string> = {
+const STAGE_COPY: Record<StudyStage, string> = {
   deidentifying:
     "De-identifying your record inside the confidential service. This can take several minutes.",
   summarizing: "Building the longitudinal study from the de-identified record…",
   saving: "Encrypting and saving the study in this browser…",
+};
+
+const STAGE_HEADINGS: Record<StudyStage, string> = {
+  deidentifying: "De-identifying your record…",
+  summarizing: "Building your study…",
+  saving: "Saving your study…",
+};
+
+const JOB_STATUS_COPY: Record<string, string> = {
+  queued: "Job queued — waiting for a worker",
+  running: "Job running",
 };
 
 // Minimal markdown rendering for the study narrative (headings, lists,
@@ -71,6 +87,51 @@ function renderNarrative(markdown: string): ReactNode[] {
   return nodes;
 }
 
+function DeidRecordView({ deid }: { deid: DeidRecordResult }) {
+  const groups = useMemo(() => {
+    const map = new Map<string, object[]>();
+    const bundle = deid.resource as { entry?: unknown[] } | null | undefined;
+    for (const entryValue of Array.isArray(bundle?.entry) ? bundle.entry : []) {
+      const resource = (entryValue as { resource?: unknown } | null)?.resource;
+      if (!resource || typeof resource !== "object") continue;
+      const type = String(
+        (resource as { resourceType?: unknown }).resourceType ?? "Other",
+      );
+      map.set(type, [...(map.get(type) ?? []), resource]);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [deid]);
+
+  return (
+    <section className="study-summary deid-record" aria-label="De-identified record">
+      <h2>De-identified record</h2>
+      <p className="auth-note">
+        This is the version of your record produced by the de-identification service
+        {deid.engine ? ` (${deid.engine === "llm" ? "local AI engine" : "rules engine"})` : ""} —
+        names, birth dates, and other identifying details are replaced with realistic
+        surrogates, and this is what the AI study was built from.
+      </p>
+      {groups.length ? (
+        groups.map(([type, resources]) => (
+          <details key={type} className="deid-group">
+            <summary>
+              {type}
+              <span className="deid-count">{resources.length}</span>
+            </summary>
+            {resources.map((resource, index) => (
+              <pre key={index} className="deid-json"><code>
+                {JSON.stringify(resource, null, 2)}
+              </code></pre>
+            ))}
+          </details>
+        ))
+      ) : (
+        <pre className="deid-json"><code>{JSON.stringify(deid.resource, null, 2)}</code></pre>
+      )}
+    </section>
+  );
+}
+
 function CommentList({
   comments,
   onRemove,
@@ -111,7 +172,9 @@ export function StudyClient() {
   const [unlocking, setUnlocking] = useState(false);
   const [hasImport, setHasImport] = useState(false);
   const [record, setRecord] = useState<StudyRecord>();
-  const [stage, setStage] = useState<StudyProgress>();
+  const [progress, setProgress] = useState<StudyProgressUpdate>();
+  const [elapsed, setElapsed] = useState(0);
+  const [view, setView] = useState<"study" | "deid">("study");
   const [error, setError] = useState<string>();
   const [savingComment, setSavingComment] = useState(false);
   const [commentTarget, setCommentTarget] = useState<number | "general">();
@@ -151,15 +214,29 @@ export function StudyClient() {
     }
   }
 
+  // Seconds counter for the active pipeline stage, reset on stage change.
+  const activeStage = progress?.stage;
+  useEffect(() => {
+    if (!activeStage) return;
+    setElapsed(0);
+    const startedAt = Date.now();
+    const timer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1_000,
+    );
+    return () => clearInterval(timer);
+  }, [activeStage]);
+
   async function generate() {
     setError(undefined);
-    setStage("deidentifying");
+    setProgress({ stage: "deidentifying" });
     try {
-      setRecord(await generateStudy({ onProgress: setStage }));
+      setRecord(await generateStudy({ onProgress: setProgress }));
+      setView("study");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not generate the study.");
     } finally {
-      setStage(undefined);
+      setProgress(undefined);
     }
   }
 
@@ -229,15 +306,37 @@ export function StudyClient() {
     );
   }
 
-  if (stage) {
+  if (progress) {
+    const steps: { stage: StudyStage; label: string }[] = [
+      { stage: "deidentifying", label: "De-identify" },
+      { stage: "summarizing", label: "Longitudinal study" },
+      { stage: "saving", label: "Save" },
+    ];
+    const activeIndex = steps.findIndex((step) => step.stage === progress.stage);
     return (
       <main className="explore-shell explore-empty" aria-live="polite">
         <div className="spinner" aria-hidden="true" />
         <p className="eyebrow">Generating your study</p>
-        <h1>
-          {stage === "deidentifying" ? "De-identifying your record…" : "Building your study…"}
-        </h1>
-        <p>{STAGE_COPY[stage]}</p>
+        <h1>{STAGE_HEADINGS[progress.stage]}</h1>
+        <p>{STAGE_COPY[progress.stage]}</p>
+        <ol className="study-steps" aria-label="Pipeline steps">
+          {steps.map((step, index) => (
+            <li
+              key={step.stage}
+              className={
+                index < activeIndex ? "done" : index === activeIndex ? "active" : ""
+              }
+            >
+              {index < activeIndex ? "✓ " : ""}{step.label}
+            </li>
+          ))}
+        </ol>
+        <p className="study-job-status">
+          {progress.jobStatus
+            ? `${JOB_STATUS_COPY[progress.jobStatus] ?? progress.jobStatus} · `
+            : "Submitting job · "}
+          {elapsed}s elapsed · status checked every 3 seconds
+        </p>
       </main>
     );
   }
@@ -287,6 +386,33 @@ export function StudyClient() {
 
       {error ? <div className="error" role="alert">{error}</div> : null}
 
+      {record.deid ? (
+        <div className="view-switcher study-view-switcher" role="tablist" aria-label="Study views">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "study"}
+            className={view === "study" ? "active" : ""}
+            onClick={() => setView("study")}
+          >
+            Longitudinal view
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "deid"}
+            className={view === "deid" ? "active" : ""}
+            onClick={() => setView("deid")}
+          >
+            De-identified record
+          </button>
+        </div>
+      ) : null}
+
+      {view === "deid" && record.deid ? (
+        <DeidRecordView deid={record.deid} />
+      ) : (
+        <>
       <section className="study-summary" aria-label="Summary">
         <h2>Summary</h2>
         <p>{record.study.patient_summary}</p>
@@ -410,6 +536,8 @@ export function StudyClient() {
           </button>
         )}
       </section>
+        </>
+      )}
     </main>
   );
 }

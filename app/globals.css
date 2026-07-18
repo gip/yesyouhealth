@@ -322,3 +322,15 @@ footer { padding-top: 32px; padding-bottom: 40px; border-top: 1px solid var(--li
 .study-comment-form textarea { width: 100%; padding: 12px 14px; border: 1px solid #bdcac3; border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; font-size: 14px; line-height: 1.5; resize: vertical; }
 .study-comment-form textarea:focus-visible { outline: 3px solid rgba(12,107,79,.22); outline-offset: 2px; border-color: var(--green); }
 .danger-button { color: #a3421f; }
+
+/* Study generation progress + de-identified record viewer */
+.study-steps { list-style: none; margin: 26px auto 0; padding: 0; display: flex; justify-content: center; gap: 8px; }
+.study-steps li { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 750; letter-spacing: .04em; }
+.study-steps li.active { border-color: var(--green); background: var(--mint); color: var(--green-dark); }
+.study-steps li.done { border-color: var(--line); background: rgba(255,255,255,.7); color: var(--green-dark); }
+.study-job-status { margin-top: 14px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.study-view-switcher { width: fit-content; }
+.deid-group { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.7); }
+.deid-group summary { display: flex; align-items: center; gap: 10px; padding: 12px 16px; font-size: 14px; font-weight: 750; cursor: pointer; }
+.deid-count { padding: 2px 9px; border-radius: 999px; background: var(--mint); color: var(--green-dark); font-size: 11px; font-weight: 800; }
+.deid-json { margin: 0 16px 14px; padding: 12px 14px; max-height: 340px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); font-size: 12px; line-height: 1.5; }

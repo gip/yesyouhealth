@@ -4,11 +4,23 @@
 
 import type { HealthExportDocument } from "@/lib/browser-flow";
 import { loadHealthExport, storeStudy } from "@/lib/browser-storage";
-import { submitJob, waitForJob, DeidServiceError } from "@/lib/deid-client";
+import {
+  submitJob,
+  waitForJob,
+  DeidServiceError,
+  type DeidJobStatus,
+} from "@/lib/deid-client";
 import { isLongitudinalStudy, type StudyRecord } from "@/lib/study";
 import type { JsonObject } from "@/lib/epic";
 
-export type StudyProgress = "deidentifying" | "summarizing" | "saving";
+export type StudyStage = "deidentifying" | "summarizing" | "saving";
+
+// Emitted on every status poll (every few seconds) so the UI can show that
+// the background job is queued or actively running.
+export interface StudyProgressUpdate {
+  stage: StudyStage;
+  jobStatus?: DeidJobStatus;
+}
 
 function isJsonObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,14 +48,15 @@ export function exportToBundle(healthExport: HealthExportDocument): JsonObject {
 async function runJob(
   type: "deid" | "long",
   payload: unknown,
+  onStatus?: (status: DeidJobStatus) => void,
 ): Promise<{ result: unknown; meta: Record<string, unknown> }> {
   const { id } = await submitJob(type, payload);
-  const job = await waitForJob(id);
+  const job = await waitForJob(id, onStatus ? { onStatus } : {});
   return { result: job.result, meta: job.meta ?? {} };
 }
 
 export async function generateStudy(options?: {
-  onProgress?: (stage: StudyProgress) => void;
+  onProgress?: (update: StudyProgressUpdate) => void;
 }): Promise<StudyRecord> {
   const healthExport = await loadHealthExport();
   if (!healthExport) {
@@ -54,22 +67,28 @@ export async function generateStudy(options?: {
     throw new Error("The imported record contains no resources to analyze.");
   }
 
-  options?.onProgress?.("deidentifying");
-  const deid = await runJob("deid", bundle);
+  options?.onProgress?.({ stage: "deidentifying" });
+  const deid = await runJob("deid", bundle, (jobStatus) =>
+    options?.onProgress?.({ stage: "deidentifying", jobStatus }));
   // With RETURN_MAP enabled the service wraps the result; unwrap either shape.
   const deidResult = deid.result;
   const scrubbed =
     isJsonObject(deidResult) && "resource" in deidResult && "map" in deidResult
       ? deidResult.resource
       : deidResult;
+  const engine = typeof deid.meta.engine === "string" ? deid.meta.engine : undefined;
 
-  options?.onProgress?.("summarizing");
-  const long = await runJob("long", scrubbed);
+  options?.onProgress?.({ stage: "summarizing" });
+  const long = await runJob("long", scrubbed, (jobStatus) =>
+    options?.onProgress?.({ stage: "summarizing", jobStatus }));
   if (!isLongitudinalStudy(long.result)) {
     throw new DeidServiceError("The service returned an invalid longitudinal study.");
   }
 
-  options?.onProgress?.("saving");
+  options?.onProgress?.({ stage: "saving" });
   const model = typeof long.meta.model === "string" ? long.meta.model : undefined;
-  return storeStudy(long.result, model);
+  return storeStudy(long.result, {
+    ...(model ? { model } : {}),
+    deid: { resource: scrubbed, ...(engine ? { engine } : {}) },
+  });
 }
