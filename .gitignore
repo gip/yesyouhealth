@@ -1,0 +1,50 @@
+# Dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+.pnp
+.pnp.*
+
+# Next.js and production output
+.next/
+out/
+dist/
+build/
+
+# Tests and generated reports
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Local environment files and secrets
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# TypeScript and tooling caches
+*.tsbuildinfo
+.turbo/
+.eslintcache
+.stylelintcache
+
+# Logs and diagnostic output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Hosting and deployment metadata
+.vercel/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
