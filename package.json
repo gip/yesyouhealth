@@ -6,7 +6,7 @@
   "type": "module",
   "description": "YesYou Health patient-authorized MyChart FHIR export",
   "engines": {
-    "node": ">=20.19"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "next dev",
