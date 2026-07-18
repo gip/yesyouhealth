@@ -4,12 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { StoragePassphraseForm } from "@/app/storage-passphrase-form";
 import {
   createExportDocument,
   equalOAuthState,
   OAUTH_TRANSACTION_KEY,
   parseOAuthTransaction,
+  type OAuthTransaction,
 } from "@/lib/browser-flow";
+import { createBrowserEncryption } from "@/lib/browser-encryption";
 import {
   abortHealthImport,
   beginHealthImport,
@@ -24,11 +27,29 @@ import {
   exportPatientRecord,
   type ImportProgress,
 } from "@/lib/epic";
-import { getProvider, providerClientId } from "@/lib/providers";
+import {
+  getProvider,
+  providerClientId,
+  type ProviderProfile,
+} from "@/lib/providers";
 
-type ExportStatus = "authorizing" | "retrieving" | "preparing" | "complete" | "error";
+type ExportStatus =
+  | "validating"
+  | "passphrase"
+  | "authorizing"
+  | "retrieving"
+  | "preparing"
+  | "complete"
+  | "error";
 
-const STATUS_COPY: Record<Exclude<ExportStatus, "error">, { heading: string; detail: string }> = {
+const STATUS_COPY: Record<
+  "validating" | "authorizing" | "retrieving" | "preparing" | "complete",
+  { heading: string; detail: string }
+> = {
+  validating: {
+    heading: "Checking your secure connection…",
+    detail: "Validating the response from your healthcare organization.",
+  },
   authorizing: {
     heading: "Completing your secure connection…",
     detail: "Exchanging the one-time authorization code directly with your healthcare organization.",
@@ -50,16 +71,22 @@ const STATUS_COPY: Record<Exclude<ExportStatus, "error">, { heading: string; det
 export function CallbackClient({ defaultClientId }: { defaultClientId: string }) {
   const router = useRouter();
   const started = useRef(false);
-  const [status, setStatus] = useState<ExportStatus>("authorizing");
+  const pendingAuthorization = useRef<{
+    code: string;
+    transaction: OAuthTransaction;
+    provider: ProviderProfile;
+    clientId: string;
+  } | undefined>(undefined);
+  const [status, setStatus] = useState<ExportStatus>("validating");
   const [error, setError] = useState<string>();
   const [progress, setProgress] = useState<ImportProgress>();
+  const [creatingKey, setCreatingKey] = useState(false);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
 
-    async function runExport() {
-      let stagedImportId: string | undefined;
+    function validateAuthorization() {
       const callbackUrl = new URL(window.location.href);
       const code = callbackUrl.searchParams.get("code");
       const actualState = callbackUrl.searchParams.get("state");
@@ -85,79 +112,126 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
         const provider = getProvider(transaction.providerId);
         if (!provider?.enabled) throw new Error("The healthcare organization was not recognized.");
         const clientId = providerClientId(provider, defaultClientId);
-
-        const smart = await discoverSmart(provider.fhirBase);
-        const token = await exchangeAuthorizationCode({
-          tokenEndpoint: smart.token_endpoint,
-          code,
-          verifier: transaction.verifier,
-          clientId,
-          redirectUri: transaction.redirectUri,
-        });
-        const patientId = token.patient?.replace(/^Patient\//, "");
-        if (!patientId) {
-          throw new Error("MyChart did not return patient context. Confirm that launch/patient is requested.");
-        }
-
-        setStatus("retrieving");
-        const exportedAt = new Date().toISOString();
-        const browserStorage = transaction.browserStorage ?? await prepareBrowserStorage();
-        const healthExport = createExportDocument({
-          providerName: provider.name,
-          fhirBase: provider.fhirBase,
-          patientId,
-          exportedAt,
-          record: { data: {}, errors: {}, priorAuthorizations: [] },
-        });
-        stagedImportId = await beginHealthImport(healthExport, browserStorage);
-
-        const record = await exportPatientRecord({
-          fhirBase: provider.fhirBase,
-          patientId,
-          accessToken: token.access_token,
-          collectData: false,
-          includeAttachments: transaction.includeAttachments,
-          includePriorAuthorizations: provider.capabilities.priorAuthorizations,
-          onResources: (group, resources) =>
-            storeHealthResourcePage(stagedImportId!, group, resources),
-          onAttachment: (attachment) =>
-            storeHealthAttachment(stagedImportId!, attachment),
-          onProgress: setProgress,
-        });
-
-        setStatus("preparing");
-        await completeHealthImport(stagedImportId, record.errors);
-        stagedImportId = undefined;
-        setStatus("complete");
-        router.replace("/explore");
+        pendingAuthorization.current = { code, transaction, provider, clientId };
+        setStatus("passphrase");
       } catch (caught) {
-        if (stagedImportId) {
-          try {
-            await abortHealthImport(stagedImportId);
-          } catch {
-            // Preserve the original import error. Incomplete staged data is never made current.
-          }
-        }
         sessionStorage.removeItem(OAUTH_TRANSACTION_KEY);
-        setError(caught instanceof Error ? caught.message : "The health record export failed.");
+        setError(caught instanceof Error ? caught.message : "The authorization response was invalid.");
         setStatus("error");
       }
     }
 
-    void runExport();
-  }, [defaultClientId, router]);
+    validateAuthorization();
+  }, [defaultClientId]);
 
-  const copy = status === "error" ? undefined : STATUS_COPY[status];
+  async function runExport(passphrase: string) {
+    const pending = pendingAuthorization.current;
+    if (!pending) {
+      setError("The authorization request was missing or expired. Please start again.");
+      setStatus("error");
+      return;
+    }
+
+    let stagedImportId: string | undefined;
+    setCreatingKey(true);
+    setError(undefined);
+    try {
+      const encryption = await createBrowserEncryption(passphrase);
+      setCreatingKey(false);
+      setStatus("authorizing");
+      const { code, transaction, provider, clientId } = pending;
+      const smart = await discoverSmart(provider.fhirBase);
+      const token = await exchangeAuthorizationCode({
+        tokenEndpoint: smart.token_endpoint,
+        code,
+        verifier: transaction.verifier,
+        clientId,
+        redirectUri: transaction.redirectUri,
+      });
+      const patientId = token.patient?.replace(/^Patient\//, "");
+      if (!patientId) {
+        throw new Error("MyChart did not return patient context. Confirm that launch/patient is requested.");
+      }
+
+      setStatus("retrieving");
+      const exportedAt = new Date().toISOString();
+      const browserStorage = transaction.browserStorage ?? await prepareBrowserStorage();
+      const healthExport = createExportDocument({
+        providerName: provider.name,
+        fhirBase: provider.fhirBase,
+        patientId,
+        exportedAt,
+        record: { data: {}, errors: {}, priorAuthorizations: [] },
+      });
+      stagedImportId = await beginHealthImport(healthExport, encryption, browserStorage);
+
+      const record = await exportPatientRecord({
+        fhirBase: provider.fhirBase,
+        patientId,
+        accessToken: token.access_token,
+        collectData: false,
+        includeAttachments: transaction.includeAttachments,
+        includePriorAuthorizations: provider.capabilities.priorAuthorizations,
+        onResources: (group, resources) =>
+          storeHealthResourcePage(stagedImportId!, group, resources, encryption),
+        onAttachment: (attachment) =>
+          storeHealthAttachment(stagedImportId!, attachment, encryption),
+        onProgress: setProgress,
+      });
+
+      setStatus("preparing");
+      await completeHealthImport(stagedImportId, record.errors, encryption);
+      stagedImportId = undefined;
+      pendingAuthorization.current = undefined;
+      setStatus("complete");
+      router.replace("/explore");
+    } catch (caught) {
+      if (stagedImportId) {
+        try {
+          await abortHealthImport(stagedImportId);
+        } catch {
+          // Preserve the original import error. Incomplete staged data is never made current.
+        }
+      }
+      sessionStorage.removeItem(OAUTH_TRANSACTION_KEY);
+      setError(caught instanceof Error ? caught.message : "The health record export failed.");
+      setStatus("error");
+    } finally {
+      setCreatingKey(false);
+    }
+  }
+
+  const copy =
+    status === "error" || status === "passphrase"
+      ? undefined
+      : STATUS_COPY[status];
   return (
     <main className="callback-page">
       <section className="callback-card" aria-live="polite">
         {status === "complete" ? <div className="success-mark" aria-hidden="true">✓</div> : null}
-        {status !== "complete" && status !== "error" ? <div className="spinner" aria-hidden="true" /> : null}
+        {!["complete", "error", "passphrase"].includes(status)
+          ? <div className="spinner" aria-hidden="true" />
+          : null}
         {status === "error" ? (
           <>
             <p className="eyebrow">Export not completed</p>
             <h1>We couldn&apos;t create your export.</h1>
             <div className="error" role="alert">{error}</div>
+          </>
+        ) : status === "passphrase" ? (
+          <>
+            <p className="eyebrow">Encrypted browser storage</p>
+            <h1>Protect your health record.</h1>
+            <p className="callback-detail">
+              Your browser will derive an encryption key with Argon2id and encrypt every
+              imported resource and file before writing it to this device.
+            </p>
+            <StoragePassphraseForm
+              mode="create"
+              busy={creatingKey}
+              error={error}
+              onSubmit={runExport}
+            />
           </>
         ) : (
           <>

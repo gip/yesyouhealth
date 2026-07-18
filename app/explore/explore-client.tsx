@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { StoragePassphraseForm } from "@/app/storage-passphrase-form";
 import type { HealthExportDocument } from "@/lib/browser-flow";
 import { downloadHealthExport } from "@/lib/browser-download";
 import {
   clearHealthExport,
+  getHealthStorageState,
   loadHealthAttachment,
   loadHealthExport,
+  lockHealthExport,
+  unlockHealthExport,
 } from "@/lib/browser-storage";
 import {
   compactIdentifier,
@@ -108,6 +112,8 @@ function TextModal({
 export function ExploreClient() {
   const [healthExport, setHealthExport] = useState<HealthExportDocument>();
   const [loading, setLoading] = useState(true);
+  const [locked, setLocked] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [loadError, setLoadError] = useState<string>();
   const [selectedKey, setSelectedKey] = useState<string>();
   const [resourceIndex, setResourceIndex] = useState(0);
@@ -120,8 +126,12 @@ export function ExploreClient() {
   useEffect(() => {
     async function load() {
       try {
-        const imported = await loadHealthExport();
-        setHealthExport(imported);
+        const storageState = await getHealthStorageState();
+        if (storageState === "locked") {
+          setLocked(true);
+        } else if (storageState === "unlocked") {
+          setHealthExport(await loadHealthExport());
+        }
       } catch (caught) {
         setLoadError(caught instanceof Error ? caught.message : "Could not open the imported record.");
       } finally {
@@ -130,6 +140,20 @@ export function ExploreClient() {
     }
     void load();
   }, []);
+
+  async function unlock(passphrase: string) {
+    setUnlocking(true);
+    setLoadError(undefined);
+    try {
+      const imported = await unlockHealthExport(passphrase);
+      setHealthExport(imported);
+      setLocked(false);
+    } catch (caught) {
+      setLoadError(caught instanceof Error ? caught.message : "Could not unlock the imported record.");
+    } finally {
+      setUnlocking(false);
+    }
+  }
 
   const groups = useMemo(
     () => healthExport ? getResourceGroups(healthExport) : [],
@@ -159,11 +183,20 @@ export function ExploreClient() {
     try {
       await clearHealthExport();
       setHealthExport(undefined);
+      setLocked(false);
     } catch (caught) {
       setLoadError(caught instanceof Error ? caught.message : "Could not remove the imported record.");
     } finally {
       setRemoving(false);
     }
+  }
+
+  function lockRecord() {
+    lockHealthExport();
+    setHealthExport(undefined);
+    setLocked(true);
+    setLoadError(undefined);
+    setTextPreview(undefined);
   }
 
   function selectGroup(key: string) {
@@ -209,6 +242,35 @@ export function ExploreClient() {
     );
   }
 
+  if (locked) {
+    return (
+      <main className="explore-shell explore-empty">
+        <section className="unlock-card">
+          <p className="eyebrow">Encrypted local record</p>
+          <h1>Unlock your health record.</h1>
+          <p>
+            The encryption key exists only in memory. Enter your storage passphrase
+            to derive it again with Argon2id.
+          </p>
+          <StoragePassphraseForm
+            mode="unlock"
+            busy={unlocking}
+            error={loadError}
+            onSubmit={unlock}
+          />
+          <button
+            className="text-button danger-button"
+            type="button"
+            onClick={removeImportedData}
+            disabled={removing || unlocking}
+          >
+            {removing ? "Removing…" : "Remove encrypted record"}
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   if (!healthExport || !activeGroup || !activeResource) {
     return (
       <main className="explore-shell explore-empty">
@@ -239,6 +301,9 @@ export function ExploreClient() {
         <div className="explore-actions">
           <button className="button primary" type="button" onClick={download} disabled={downloading}>
             {downloading ? "Preparing…" : "Download export"}
+          </button>
+          <button className="text-button" type="button" onClick={lockRecord}>
+            Lock record
           </button>
           <button className="text-button danger-button" type="button" onClick={removeImportedData} disabled={removing}>
             {removing ? "Removing…" : "Remove imported data"}
@@ -279,7 +344,7 @@ export function ExploreClient() {
             ))}
           </div>
           <p className="local-data-note">
-            This record is stored only in this browser
+            This record is encrypted and stored only in this browser
             {healthExport.browserStorage?.persistent
               ? " with persistent-storage protection."
               : "; the browser may clear it under storage pressure."}

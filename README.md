@@ -8,7 +8,7 @@ The data flow is browser-only:
 2. The patient signs in at the healthcare organization and approves read-only access.
 3. The organization redirects to the static `/callback` page with a short-lived authorization code.
 4. The browser validates state, exchanges the code using PKCE, and retrieves the authorized FHIR record directly from the organization.
-5. The browser writes FHIR resources page by page into IndexedDB and stores selected clinical-note files as separate `Blob` records. After the staged import completes, it becomes the current local record and `/explore` opens. The patient can review rendered fields, inspect raw FHIR JSON, download the export, or remove the imported data. The access token and health records do not pass through the YesYou Health application server.
+5. After authorization, the patient creates a storage passphrase. The browser derives a 256-bit key with Argon2id and encrypts every FHIR resource and selected clinical-note file with AES-GCM before writing ciphertext to IndexedDB. After the staged import completes, it becomes the current local record and `/explore` opens. The patient can review rendered fields, inspect raw FHIR JSON, download a decrypted export, lock the record, or remove it. The access token, passphrase, encryption key, and health records do not pass through the YesYou Health application server.
 
 ## Epic on FHIR configuration
 
@@ -161,9 +161,13 @@ The selected healthcare organization must permit browser cross-origin requests t
 - The Explore page creates a `.json.gz` download on request. Stored Binary files are encoded into FHIR Binary resources only while preparing that download. Browsers without the standard `CompressionStream` API receive an uncompressed `.json` file instead.
 - The export includes raw FHIR resources and may contain highly sensitive health information.
 - OAuth state and the PKCE verifier are kept in browser session storage for at most ten minutes and removed on callback.
-- The access token is processed only in browser memory and is never saved. A new import is staged under a unique ID and replaces the previous import only after it completes successfully.
-- Structured resources are stored individually in IndexedDB. Optional clinical-note files are stored as `Blob`s with a 10 MB per-file limit, 50 MB aggregate limit, and a supported HTML, text, RTF, PDF, or image content type.
+- The access token is processed only in browser memory and is never saved. A new encrypted import is staged under a unique ID and replaces the previous import only after it completes successfully.
+- The storage passphrase must contain at least 12 characters. It is normalized with NFKC and passed to Argon2id with a unique 16-byte salt, 19 MiB of memory, two iterations, and one lane to derive a 256-bit AES key. The passphrase is never stored and the non-extractable key exists only in browser memory.
+- Structured resources, document metadata, errors, attachment metadata, and attachment bytes are authenticated and encrypted with AES-256-GCM using a fresh 96-bit IV and record-specific additional authenticated data. IndexedDB contains only ciphertext plus the non-secret key-derivation parameters, random record identifiers, completion state, and the current-record pointer.
+- Database schema upgrades delete records created by older plaintext-storage versions. They are not migrated or opened.
+- Optional clinical-note files retain a 10 MB per-file limit, 50 MB aggregate limit, and a supported HTML, text, RTF, PDF, or image content type before encryption.
 - The app checks the browser's estimated quota and requests persistent storage. The browser may deny that request or remove non-persistent data under storage pressure, and users can always clear site data.
+- Downloaded `.json` and `.json.gz` exports are decrypted files and are not protected by the browser-storage passphrase.
 - The callback removes the authorization code from the address bar immediately and the site sends `Referrer-Policy: no-referrer`. The initial callback page request still reaches the hosting provider and may appear in limited technical logs.
 - FHIR pagination is restricted to the configured provider origin and API base.
 - Binary URLs must remain inside the configured FHIR base and identify a direct `Binary/{id}` resource. Imported HTML is stored but never injected into the application page.
