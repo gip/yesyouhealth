@@ -60,18 +60,49 @@ registration.
 
 The public documentation URL can point to the deployed home page. Terms are at `/terms` and the privacy notice is at `/privacy`.
 
+## Accounts, roles, and literature
+
+The app has a small Postgres-backed account tier (next-auth v5, direct SQL via
+`pg` — no ORM):
+
+- **Sign-in**: email + password (Argon2id-hashed) or Google. Google users pick
+  their role and fields on `/onboarding` after first sign-in.
+- **Roles**: `patient` or `doctor`, chosen at signup and immutable afterwards.
+- **Fields**: a seeded list of medical fields (Diabetic Care, GI Health,
+  Cardiology, …). Every user selects up to two.
+- **Patients** import their MyChart record (the browser-only encrypted flow
+  below, which needs no account) and can browse literature. Accounts gate the
+  patient dashboard, field selections, and doctor tools — never the import.
+- **Doctors** add peer-reviewed literature (title, authors, journal, year, and
+  a DOI or PubMed link) to their own fields via `/doctor`. Everyone can browse
+  it at `/literature`.
+
+Health records never touch the server: the backend stores only accounts,
+field selections, and literature citations.
+
+Schema lives in `migrations/*.sql`, applied by `pnpm db:migrate`
+(`scripts/migrate.ts`, tracked in `schema_migrations`). Server code is under
+`lib/server/` (`db.ts` pool, `password.ts`, `validation.ts`, `users.ts`,
+`fields.ts`, `literature.ts`) with the next-auth config in `auth.ts` and route
+protection in `proxy.ts`.
+
 ## Local setup
 
-Requires Node.js 20.9 or newer.
+Requires Node.js 24 or newer and PostgreSQL 14 or newer.
 
 ```bash
 pnpm install
 cp .env.example .env.local
 ```
 
-Set the non-production Epic client ID in `.env.local`, then run:
+Set the non-production Epic client ID, `DATABASE_URL`, and a generated
+`AUTH_SECRET` (`openssl rand -base64 32`) in `.env.local`. For Google sign-in,
+also set `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` from a Google OAuth client with
+redirect URI `http://localhost:3000/api/auth/callback/google`. Then run:
 
 ```bash
+createdb yesyou
+pnpm db:migrate
 pnpm dev
 ```
 
@@ -105,6 +136,14 @@ When adding or changing a production profile:
 pnpm test
 pnpm typecheck
 pnpm build
+```
+
+Database integration tests run only when `TEST_DATABASE_URL` is set (they
+migrate and truncate that database):
+
+```bash
+createdb yesyou_test
+TEST_DATABASE_URL=postgres://localhost:5432/yesyou_test pnpm test
 ```
 
 ## Convert a FHIR export to Markdown
@@ -148,7 +187,15 @@ EPIC_CLIENT_ID=your-production-client-id
 EPIC_REDIRECT_URI=https://YOUR_DOMAIN/callback
 EPIC_SCOPE=openid fhirUser launch/patient patient/*.read
 NEXT_PUBLIC_SUPPORT_EMAIL=your-support-address
+DATABASE_URL=your-hosted-postgres-connection-string
+AUTH_SECRET=generate-with-openssl-rand-base64-32
+AUTH_GOOGLE_ID=your-google-oauth-client-id
+AUTH_GOOGLE_SECRET=your-google-oauth-client-secret
 ```
+
+Register `https://YOUR_DOMAIN/api/auth/callback/google` as an authorized
+redirect URI in the Google OAuth client, and run `pnpm db:migrate` against the
+production database as part of each deploy that adds a migration.
 
 The client ID is a public identifier and is embedded in the browser application. Do not configure `EPIC_CLIENT_SECRET`: this implementation is a public PKCE client, and browser code cannot keep a client secret confidential.
 

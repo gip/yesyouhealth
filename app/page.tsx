@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { auth } from "@/auth";
 import { ConnectButton } from "@/app/connect-button";
 import {
   DEFAULT_PROVIDER_ID,
@@ -11,7 +12,9 @@ import {
   requireEpicClientId,
 } from "@/lib/server-config";
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+  const role = session?.user?.role ?? null;
   const providers = selectableProviders(process.env.NODE_ENV === "development");
   return (
     <main>
@@ -25,14 +28,22 @@ export default function Home() {
             made available by your provider, encrypted on your device with a passphrase you choose.
           </p>
           <div className="actions">
-            <ConnectButton
-              defaultClientId={requireEpicClientId()}
-              defaultProviderId={DEFAULT_PROVIDER_ID}
-              defaultScope={epicScope()}
-              configuredRedirectUri={configuredEpicRedirectUri()}
-              providers={providers}
-            />
-            <Link className="button secondary" href="/terms">Review the terms</Link>
+            {role === "doctor" ? (
+              <Link className="button primary" href="/doctor">Go to your dashboard</Link>
+            ) : (
+              <ConnectButton
+                defaultClientId={requireEpicClientId()}
+                defaultProviderId={DEFAULT_PROVIDER_ID}
+                defaultScope={epicScope()}
+                configuredRedirectUri={configuredEpicRedirectUri()}
+                providers={providers}
+              />
+            )}
+            {session?.user ? (
+              <Link className="button secondary" href="/terms">Review the terms</Link>
+            ) : (
+              <Link className="button secondary" href="/signup">Create an account</Link>
+            )}
           </div>
           <p className="consent-note">
             By continuing, you agree to the <Link href="/terms">Terms</Link> and acknowledge the <Link href="/privacy">Privacy Notice</Link>.
