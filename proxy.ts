@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 
+// The FHIR import flow (/, /callback, /explore) is account-free by design:
+// records stay encrypted in the browser and never touch the server.
 export const config = {
-  matcher: ["/doctor/:path*", "/patient/:path*", "/explore", "/callback", "/onboarding"],
+  matcher: ["/doctor/:path*", "/patient/:path*", "/onboarding"],
 };
 
-const PATIENT_ONLY_PREFIXES = ["/patient", "/explore", "/callback"];
+const PATIENT_ONLY_PREFIXES = ["/patient"];
 
 export default auth((request) => {
   const { nextUrl } = request;

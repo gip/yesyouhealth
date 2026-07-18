@@ -71,7 +71,8 @@ The app has a small Postgres-backed account tier (next-auth v5, direct SQL via
 - **Fields**: a seeded list of medical fields (Diabetic Care, GI Health,
   Cardiology, …). Every user selects up to two.
 - **Patients** import their MyChart record (the browser-only encrypted flow
-  below, now gated behind a patient session) and can browse literature.
+  below, which needs no account) and can browse literature. Accounts gate the
+  patient dashboard, field selections, and doctor tools — never the import.
 - **Doctors** add peer-reviewed literature (title, authors, journal, year, and
   a DOI or PubMed link) to their own fields via `/doctor`. Everyone can browse
   it at `/literature`.
