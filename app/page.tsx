@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { auth } from "@/auth";
 import { ConnectButton } from "@/app/connect-button";
+import { HomeRedirect } from "@/app/home-redirect";
 import {
   DEFAULT_PROVIDER_ID,
   selectableProviders,
@@ -18,6 +19,7 @@ export default async function Home() {
   const providers = selectableProviders(process.env.NODE_ENV === "development");
   return (
     <main>
+      {role === "doctor" ? null : <HomeRedirect />}
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">Your care, made understandable</p>

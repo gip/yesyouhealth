@@ -299,6 +299,7 @@ export function ExploreClient() {
           </p>
         </div>
         <div className="explore-actions">
+          <Link className="button secondary" href="/study">Open your study</Link>
           <button className="button primary" type="button" onClick={download} disabled={downloading}>
             {downloading ? "Preparing…" : "Download export"}
           </button>
