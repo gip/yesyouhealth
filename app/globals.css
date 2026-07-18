@@ -293,3 +293,32 @@ footer { padding-top: 32px; padding-bottom: 40px; border-top: 1px solid var(--li
   .dashboard-grid, .role-picker-options, .field-picker-options { grid-template-columns: 1fr; }
   .auth-card { padding: 30px 24px; }
 }
+
+/* Longitudinal study */
+.study-shell { display: grid; gap: 34px; }
+.study-shell h2 { margin: 0 0 14px; font-family: Georgia, serif; font-size: 26px; font-weight: 500; }
+.study-summary, .study-timeline, .study-narrative, .study-general-comments { padding: 26px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); box-shadow: 0 12px 36px rgba(23, 49, 39, .06); }
+.study-summary p { margin: 0; color: #4c5e57; font-size: 16px; line-height: 1.7; }
+.study-timeline ol { list-style: none; margin: 0; padding: 0; }
+.study-entry { position: relative; padding: 18px 0 18px 26px; border-left: 2px solid var(--mint); }
+.study-entry::before { content: ""; position: absolute; left: -6px; top: 26px; width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
+.study-entry + .study-entry { border-top: 1px solid var(--line); }
+.study-entry strong { display: block; margin: 6px 0 4px; font-size: 16px; }
+.study-entry > p { margin: 0 0 6px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.study-entry-head { display: flex; align-items: center; gap: 10px; }
+.study-entry-head time { color: var(--muted); font-size: 13px; font-weight: 750; letter-spacing: .03em; }
+.study-badge { padding: 3px 9px; border-radius: 999px; background: var(--mint); color: var(--green-dark); font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.study-badge-prior_auth_denied { background: #fff1eb; color: #81391f; }
+.study-badge-lab { background: #eaf1fb; color: #274a78; }
+.study-badge-medication { background: #f4ecfb; color: #5a3a80; }
+.study-narrative p { color: #4c5e57; font-size: 15px; line-height: 1.7; }
+.study-narrative h3, .study-narrative h4 { margin: 18px 0 8px; font-family: Georgia, serif; font-weight: 500; }
+.study-narrative ul { margin: 8px 0; padding-left: 22px; color: #4c5e57; font-size: 15px; line-height: 1.7; }
+.study-comments { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.study-comments li { padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.7); }
+.study-comments p { margin: 0 0 4px; font-size: 14px; line-height: 1.55; }
+.study-comment-meta { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; }
+.study-comment-form { margin-top: 10px; display: grid; gap: 10px; }
+.study-comment-form textarea { width: 100%; padding: 12px 14px; border: 1px solid #bdcac3; border-radius: 10px; background: var(--paper); color: var(--ink); font: inherit; font-size: 14px; line-height: 1.5; resize: vertical; }
+.study-comment-form textarea:focus-visible { outline: 3px solid rgba(12,107,79,.22); outline-offset: 2px; border-color: var(--green); }
+.danger-button { color: #a3421f; }

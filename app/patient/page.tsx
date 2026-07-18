@@ -50,6 +50,17 @@ export default async function PatientPage() {
             <Link className="button secondary" href="/explore">Explore your record</Link>
           </div>
         </section>
+        <section className="dashboard-card" aria-label="Longitudinal study">
+          <h2>Longitudinal study</h2>
+          <p className="auth-note">
+            A de-identified, AI-built timeline of your diagnoses, labs, medications, denied prior
+            authorizations, and screenings — generated after import and stored encrypted in your
+            browser. Review it and add your comments.
+          </p>
+          <div className="dashboard-actions">
+            <Link className="button secondary" href="/study">Open your study</Link>
+          </div>
+        </section>
         {patientId ? (
           <PatientFieldsCard allFields={allFields} myFields={myFields} />
         ) : (

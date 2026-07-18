@@ -16,13 +16,17 @@ import {
   type EncryptionMetadata,
 } from "@/lib/browser-encryption";
 import type { BinaryAttachment, JsonObject } from "@/lib/epic";
+import type { LongitudinalStudy, StudyComment, StudyRecord } from "@/lib/study";
 
 const DATABASE_NAME = "yesyou-health";
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
+// Versions below this stored health data in plaintext and are wiped on upgrade.
+const FIRST_ENCRYPTED_VERSION = 3;
 const LEGACY_EXPORT_STORE = "exports";
 const IMPORT_STORE = "imports";
 const RESOURCE_STORE = "resources";
 const ATTACHMENT_STORE = "attachments";
+const STUDY_STORE = "studies";
 const CURRENT_IMPORT_KEY = "current";
 const IMPORT_INDEX = "by-import";
 const ENCRYPTED_FORMAT = "encrypted-v1";
@@ -47,6 +51,12 @@ interface StoredEncryptedAttachment {
   importId: string;
   sequence: string;
   metadata: EncryptedPayload;
+  payload: EncryptedPayload;
+}
+
+interface StoredEncryptedStudy {
+  format: typeof ENCRYPTED_FORMAT;
+  importId: string;
   payload: EncryptedPayload;
 }
 
@@ -81,6 +91,8 @@ function createStores(database: IDBDatabase): void {
     keyPath: ["importId", "sequence"],
   });
   attachments.createIndex(IMPORT_INDEX, "importId");
+
+  database.createObjectStore(STUDY_STORE);
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -96,12 +108,14 @@ function openDatabase(): Promise<IDBDatabase> {
 
       // Versions 1 and 2 stored health data in plaintext. Delete those stores
       // during the security upgrade so plaintext can never be opened or retained.
-      if (event.oldVersion > 0 && event.oldVersion < DATABASE_VERSION) {
+      // Encrypted-era upgrades (v3 -> v4 added the studies store) must NOT wipe.
+      if (event.oldVersion > 0 && event.oldVersion < FIRST_ENCRYPTED_VERSION) {
         for (const storeName of [
           LEGACY_EXPORT_STORE,
           IMPORT_STORE,
           RESOURCE_STORE,
           ATTACHMENT_STORE,
+          STUDY_STORE,
         ]) {
           if (database.objectStoreNames.contains(storeName)) {
             database.deleteObjectStore(storeName);
@@ -110,6 +124,9 @@ function openDatabase(): Promise<IDBDatabase> {
       }
 
       if (!database.objectStoreNames.contains(IMPORT_STORE)) createStores(database);
+      else if (!database.objectStoreNames.contains(STUDY_STORE)) {
+        database.createObjectStore(STUDY_STORE);
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(
@@ -161,6 +178,10 @@ function attachmentAad(
   return `yesyou-health:${importId}:attachment:${sequence}:${field}`;
 }
 
+function studyAad(importId: string): string {
+  return `yesyou-health:${importId}:study`;
+}
+
 function isStoredEncryptedImport(value: unknown): value is StoredEncryptedImport {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const stored = value as Record<string, unknown>;
@@ -206,10 +227,11 @@ function activeContext(importId: string): BrowserEncryptionContext {
 
 async function deleteImportData(database: IDBDatabase, importId: string): Promise<void> {
   const transaction = database.transaction(
-    [IMPORT_STORE, RESOURCE_STORE, ATTACHMENT_STORE],
+    [IMPORT_STORE, RESOURCE_STORE, ATTACHMENT_STORE, STUDY_STORE],
     "readwrite",
   );
   transaction.objectStore(IMPORT_STORE).delete(importId);
+  transaction.objectStore(STUDY_STORE).delete(importId);
 
   for (const storeName of [RESOURCE_STORE, ATTACHMENT_STORE]) {
     const index = transaction.objectStore(storeName).index(IMPORT_INDEX);
@@ -641,6 +663,91 @@ export async function loadHealthExport(): Promise<HealthExportDocument | undefin
   }
 }
 
+function isStoredEncryptedStudy(value: unknown): value is StoredEncryptedStudy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const stored = value as Record<string, unknown>;
+  return (
+    stored.format === ENCRYPTED_FORMAT &&
+    typeof stored.importId === "string" &&
+    isEncryptedPayload(stored.payload)
+  );
+}
+
+async function putStudyRecord(record: StudyRecord): Promise<void> {
+  const database = await openDatabase();
+  try {
+    const context = activeContext(record.importId);
+    const payload = await encryptJson(record, context, studyAad(record.importId));
+    const transaction = database.transaction(STUDY_STORE, "readwrite");
+    transaction.objectStore(STUDY_STORE).put(
+      {
+        format: ENCRYPTED_FORMAT,
+        importId: record.importId,
+        payload,
+      } satisfies StoredEncryptedStudy,
+      record.importId,
+    );
+    await transactionComplete(transaction, "Could not save the encrypted longitudinal study.");
+  } catch (error) {
+    throw storageError(error, "Could not save the encrypted longitudinal study.");
+  } finally {
+    database.close();
+  }
+}
+
+export async function storeStudy(
+  study: LongitudinalStudy,
+  model?: string,
+): Promise<StudyRecord> {
+  const database = await openDatabase();
+  let importId: string | undefined;
+  try {
+    importId = await currentImportId(database);
+  } finally {
+    database.close();
+  }
+  if (!importId) throw new Error("No imported health record to attach the study to.");
+
+  const record: StudyRecord = {
+    id: crypto.randomUUID(),
+    importId,
+    createdAt: new Date().toISOString(),
+    ...(model ? { model } : {}),
+    study,
+    comments: [],
+  };
+  await putStudyRecord(record);
+  return record;
+}
+
+export async function loadCurrentStudy(): Promise<StudyRecord | undefined> {
+  const database = await openDatabase();
+  try {
+    const importId = await currentImportId(database);
+    if (!importId) return undefined;
+    const context = activeContext(importId);
+    const transaction = database.transaction(STUDY_STORE, "readonly");
+    const value: unknown = await requestResult(
+      transaction.objectStore(STUDY_STORE).get(importId),
+    );
+    if (value === undefined) return undefined;
+    if (!isStoredEncryptedStudy(value)) {
+      throw new Error("The encrypted local study is damaged or unsupported.");
+    }
+    return await decryptJson<StudyRecord>(value.payload, context, studyAad(importId));
+  } finally {
+    database.close();
+  }
+}
+
+export async function updateStudyComments(comments: StudyComment[]): Promise<StudyRecord> {
+  const record = await loadCurrentStudy();
+  if (!record) throw new Error("No longitudinal study is stored for this record.");
+  const updated: StudyRecord = { ...record, comments };
+  await putStudyRecord(updated);
+  return updated;
+}
+
 export function lockHealthExport(): void {
   activeEncryption = undefined;
 }
@@ -649,13 +756,14 @@ export async function clearHealthExport(): Promise<void> {
   const database = await openDatabase();
   try {
     const transaction = database.transaction(
-      [LEGACY_EXPORT_STORE, IMPORT_STORE, RESOURCE_STORE, ATTACHMENT_STORE],
+      [LEGACY_EXPORT_STORE, IMPORT_STORE, RESOURCE_STORE, ATTACHMENT_STORE, STUDY_STORE],
       "readwrite",
     );
     transaction.objectStore(LEGACY_EXPORT_STORE).clear();
     transaction.objectStore(IMPORT_STORE).clear();
     transaction.objectStore(RESOURCE_STORE).clear();
     transaction.objectStore(ATTACHMENT_STORE).clear();
+    transaction.objectStore(STUDY_STORE).clear();
     await transactionComplete(transaction, "Could not remove the encrypted imported record.");
     activeEncryption = undefined;
   } finally {

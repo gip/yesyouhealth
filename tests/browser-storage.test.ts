@@ -76,7 +76,7 @@ test("stores only encrypted health content and requires the passphrase after loc
     "secret-patient-id",
   );
 
-  const database = await idbResult(indexedDB.open("yesyou-health", 3));
+  const database = await idbResult(indexedDB.open("yesyou-health", 4));
   const currentImportId = await idbResult(
     database.transaction("imports").objectStore("imports").get("current"),
   ) as string;

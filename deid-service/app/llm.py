@@ -246,7 +246,9 @@ async def _warm_up(client: httpx.AsyncClient, config: LLMConfig) -> None:
         },
         timeout=httpx.Timeout(30.0, read=None),  # first load reads ~18GB from disk
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        # Keep ollama's body: on OOM it says exactly how much memory is missing.
+        raise LLMScrubError(f"warm-up failed: HTTP {resp.status_code}: {resp.text[:300]}")
 
 
 async def startup(config: LLMConfig, client: httpx.AsyncClient | None = None) -> None:

@@ -32,6 +32,7 @@ import {
   providerClientId,
   type ProviderProfile,
 } from "@/lib/providers";
+import { generateStudy } from "@/lib/study-pipeline";
 
 type ExportStatus =
   | "validating"
@@ -39,11 +40,19 @@ type ExportStatus =
   | "authorizing"
   | "retrieving"
   | "preparing"
+  | "deidentifying"
+  | "summarizing"
   | "complete"
   | "error";
 
 const STATUS_COPY: Record<
-  "validating" | "authorizing" | "retrieving" | "preparing" | "complete",
+  | "validating"
+  | "authorizing"
+  | "retrieving"
+  | "preparing"
+  | "deidentifying"
+  | "summarizing"
+  | "complete",
   { heading: string; detail: string }
 > = {
   validating: {
@@ -61,6 +70,15 @@ const STATUS_COPY: Record<
   preparing: {
     heading: "Preparing your private record…",
     detail: "Your browser is organizing the imported data and saving it locally for exploration.",
+  },
+  deidentifying: {
+    heading: "De-identifying your record…",
+    detail:
+      "The confidential service is removing names, dates of birth, and other identifying details. This can take several minutes.",
+  },
+  summarizing: {
+    heading: "Building your longitudinal study…",
+    detail: "AI is assembling a timeline of diagnoses, labs, medications, and more from the de-identified record.",
   },
   complete: {
     heading: "Opening your record…",
@@ -183,8 +201,21 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
       await completeHealthImport(stagedImportId, record.errors, encryption);
       stagedImportId = undefined;
       pendingAuthorization.current = undefined;
-      setStatus("complete");
-      router.replace("/explore");
+
+      // The import is committed; the study pipeline is best-effort. If it
+      // fails, land on the explorer — /study offers a retry.
+      try {
+        setStatus("deidentifying");
+        await generateStudy({
+          onProgress: (stage) =>
+            setStatus(stage === "deidentifying" ? "deidentifying" : "summarizing"),
+        });
+        setStatus("complete");
+        router.replace("/study");
+      } catch {
+        setStatus("complete");
+        router.replace("/explore");
+      }
     } catch (caught) {
       if (stagedImportId) {
         try {

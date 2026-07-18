@@ -26,6 +26,18 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300}
+      # ANTHROPIC_API_KEY arrives via the encrypted env file (`-e .env`),
+      # never this compose file. Without it the service still boots and
+      # POST /jobs {"type": "long"} returns 503 (same degrade philosophy as
+      # the ollama path).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
+      DEID_JOB_CONCURRENCY: ${DEID_JOB_CONCURRENCY:-1}
+      LONG_JOB_CONCURRENCY: ${LONG_JOB_CONCURRENCY:-3}
+      JOB_TTL_SECONDS: ${JOB_TTL_SECONDS:-3600}
+      # The patient's browser calls this service directly — set this to the
+      # web app origin (e.g. https://app.yesyou.health) in the encrypted env.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
     volumes:
       # dstack guest-agent socket so /attestation can return a real RA quote.
       # NOTE: confirm the exact socket path/name against current Phala/dstack

@@ -35,9 +35,32 @@ and its free-text PHI recall is not guaranteed** the way the rules engine is.
 
 | Endpoint | Description |
 | --- | --- |
-| `POST /scrub` | Body is FHIR JSON; returns scrubbed JSON with identical shape (`X-Deid-Engine` header says which engine ran) |
-| `GET /health` | Liveness (never depends on Ollama) + LLM status: `{"status": "ok", "llm": {"state": "starting\|pulling\|warming\|ready\|unavailable\|disabled", ...}}` |
+| `POST /scrub` | Body is FHIR JSON; returns scrubbed JSON with identical shape (`X-Deid-Engine` header says which engine ran). Blocking — prefer the job API below |
+| `POST /jobs` | Submit a background job: `{"type": "deid"\|"long", "payload": <JSON>}` → `202 {"id", "type", "status", "created_at"}`. `400` bad type/payload, `429` queue full, `503` for `long` without `ANTHROPIC_API_KEY` |
+| `GET /jobs/{id}` | Poll a job: `{"id", "type", "status": "queued\|running\|succeeded\|failed", "created_at", "started_at", "finished_at", "result", "error", "meta"}`. `result` is set only on `succeeded`; `404` for unknown/expired ids |
+| `GET /health` | Liveness (never depends on Ollama/Anthropic) + LLM status + `jobs` queue stats + `anthropic` configured-ness |
 | `GET /attestation` | dstack RA quote inside a TEE; `{"tee": false}` otherwise |
+
+## Job types
+
+- **`deid`** — same LLM-first/rules-fallback scrub as `/scrub`, run in the
+  background (one worker: CPU inference is serial). `meta.engine` reports which
+  engine ran.
+- **`long`** — longitudinal patient view via the Anthropic API
+  (`claude-opus-4-8` by default). The payload is a patient history as arbitrary
+  JSON — **intended to be the output of a prior `deid` job**. Before anything
+  leaves the service, every ISO date is shifted by one deterministic offset so
+  the earliest date maps to `2000-01-01` (intervals preserved); real dates
+  never reach Anthropic, and the output is rejected if any original date
+  appears in it. The result is
+  `{"patient_summary", "timeline": [{"date", "category", "title", "detail"}],
+  "narrative_markdown"}` covering diagnoses, labs, medication orders, denied
+  prior authorizations, procedures/screenings, self-evaluations, and
+  encounters.
+
+Jobs are held **in memory** (lost on restart) and expire `JOB_TTL_SECONDS`
+after finishing; payloads are dropped the moment a job completes so PHI does
+not linger.
 
 ## Configuration (env vars)
 
@@ -51,7 +74,15 @@ and its free-text PHI recall is not guaranteed** the way the rules engine is.
 | `OLLAMA_NUM_CTX` | `16384` | Model context window; resources too large for it fall back to rules |
 | `AGE_STRATEGY` | `fixed_30` | (rules engine) `fixed_30`: synthetic DOB ~30y old ±3y. `preserve_band`: real age generalized to a 5-year band midpoint |
 | `SCRUB_FREETEXT` | `false` | (rules engine) Run Presidio (spaCy `en_core_web_sm`) over free-text fields for PERSON / DATE_TIME / PHONE_NUMBER / EMAIL_ADDRESS / LOCATION |
-| `RETURN_MAP` | `false` | Also return the per-request original→surrogate map (de-id is one-way by default). The LLM engine cannot produce a map, so it returns `"map": null` |
+| `RETURN_MAP` | `false` | Also return the per-request original→surrogate map (de-id is one-way by default). The LLM engine cannot produce a map, so it returns `"map": null`. Also gates `meta.offset_days` on `long` jobs |
+| `ANTHROPIC_API_KEY` | _(unset)_ | Enables `long` jobs. On Phala this arrives via the encrypted `-e .env` file, never the compose file |
+| `ANTHROPIC_MODEL` | `claude-opus-4-8` | Claude model for the longitudinal view |
+| `ANTHROPIC_MAX_TOKENS` | `32000` | Max output tokens for the longitudinal view |
+| `DEID_JOB_CONCURRENCY` | `1` | Workers for the `deid` job lane (keep 1 on CPU Ollama) |
+| `LONG_JOB_CONCURRENCY` | `3` | Workers for the `long` job lane (Anthropic calls are I/O-bound) |
+| `JOB_MAX_QUEUE` | `100` | Max queued jobs per lane before `429` |
+| `JOB_TTL_SECONDS` | `3600` | How long finished jobs stay pollable |
+| `CORS_ALLOW_ORIGINS` | `*` | Comma-separated allowed origins; the patient's browser calls this service directly, so set it to the web app origin in production |
 
 Consistency guarantee (rules engine): within one request, the same original
 value always maps to the same fake value (deterministically seeded from a hash

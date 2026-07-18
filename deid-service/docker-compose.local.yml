@@ -18,6 +18,16 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300}
+      # Job queue + Anthropic longitudinal view. Without ANTHROPIC_API_KEY the
+      # service still boots; POST /jobs {"type": "long"} returns 503.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
+      DEID_JOB_CONCURRENCY: ${DEID_JOB_CONCURRENCY:-1}
+      LONG_JOB_CONCURRENCY: ${LONG_JOB_CONCURRENCY:-3}
+      JOB_TTL_SECONDS: ${JOB_TTL_SECONDS:-3600}
+      # Browser calls this service directly; restrict to the web app origin
+      # in anything beyond local dev.
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
     depends_on:
       ollama:
         # service_started, NOT service_healthy: deid must boot and degrade
