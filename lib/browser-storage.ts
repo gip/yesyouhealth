@@ -3,33 +3,84 @@ import type {
   HealthAttachmentSummary,
   HealthExportDocument,
 } from "@/lib/browser-flow";
+import {
+  decryptBytes,
+  decryptJson,
+  encryptBytes,
+  encryptJson,
+  isEncryptedPayload,
+  isEncryptionMetadata,
+  unlockBrowserEncryption,
+  type BrowserEncryptionContext,
+  type EncryptedPayload,
+  type EncryptionMetadata,
+} from "@/lib/browser-encryption";
 import type { BinaryAttachment, JsonObject } from "@/lib/epic";
 
 const DATABASE_NAME = "yesyou-health";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 const LEGACY_EXPORT_STORE = "exports";
 const IMPORT_STORE = "imports";
 const RESOURCE_STORE = "resources";
 const ATTACHMENT_STORE = "attachments";
 const CURRENT_IMPORT_KEY = "current";
 const IMPORT_INDEX = "by-import";
+const ENCRYPTED_FORMAT = "encrypted-v1";
+const KEY_CHECK_VALUE = "yesyou-health-storage-key-v1";
 
-interface StoredImport {
+interface StoredEncryptedImport {
+  format: typeof ENCRYPTED_FORMAT;
   importId: string;
-  document: HealthExportDocument;
+  encryption: EncryptionMetadata;
+  keyCheck: EncryptedPayload;
+  document: EncryptedPayload;
   complete: boolean;
 }
 
-interface StoredResource {
+interface StoredEncryptedResource {
   importId: string;
+  sequence: string;
+  payload: EncryptedPayload;
+}
+
+interface StoredEncryptedAttachment {
+  importId: string;
+  sequence: string;
+  metadata: EncryptedPayload;
+  payload: EncryptedPayload;
+}
+
+interface EncryptedResourceContent {
   group: string;
-  identity: string;
   resource: JsonObject;
 }
+
+interface EncryptedAttachmentMetadata extends HealthAttachmentSummary {}
 
 export interface StoredHealthAttachment extends HealthAttachmentSummary {
   importId: string;
   blob: Blob;
+}
+
+export type HealthStorageState = "empty" | "locked" | "unlocked";
+
+let activeEncryption:
+  | { importId: string; context: BrowserEncryptionContext }
+  | undefined;
+
+function createStores(database: IDBDatabase): void {
+  database.createObjectStore(LEGACY_EXPORT_STORE);
+  database.createObjectStore(IMPORT_STORE);
+
+  const resources = database.createObjectStore(RESOURCE_STORE, {
+    keyPath: ["importId", "sequence"],
+  });
+  resources.createIndex(IMPORT_INDEX, "importId");
+
+  const attachments = database.createObjectStore(ATTACHMENT_STORE, {
+    keyPath: ["importId", "sequence"],
+  });
+  attachments.createIndex(IMPORT_INDEX, "importId");
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -40,36 +91,39 @@ function openDatabase(): Promise<IDBDatabase> {
     }
 
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(LEGACY_EXPORT_STORE)) {
-        database.createObjectStore(LEGACY_EXPORT_STORE);
+
+      // Versions 1 and 2 stored health data in plaintext. Delete those stores
+      // during the security upgrade so plaintext can never be opened or retained.
+      if (event.oldVersion > 0 && event.oldVersion < DATABASE_VERSION) {
+        for (const storeName of [
+          LEGACY_EXPORT_STORE,
+          IMPORT_STORE,
+          RESOURCE_STORE,
+          ATTACHMENT_STORE,
+        ]) {
+          if (database.objectStoreNames.contains(storeName)) {
+            database.deleteObjectStore(storeName);
+          }
+        }
       }
-      if (!database.objectStoreNames.contains(IMPORT_STORE)) {
-        database.createObjectStore(IMPORT_STORE);
-      }
-      if (!database.objectStoreNames.contains(RESOURCE_STORE)) {
-        const resources = database.createObjectStore(RESOURCE_STORE, {
-          keyPath: ["importId", "group", "identity"],
-        });
-        resources.createIndex(IMPORT_INDEX, "importId");
-      }
-      if (!database.objectStoreNames.contains(ATTACHMENT_STORE)) {
-        const attachments = database.createObjectStore(ATTACHMENT_STORE, {
-          keyPath: ["importId", "key"],
-        });
-        attachments.createIndex(IMPORT_INDEX, "importId");
-      }
+
+      if (!database.objectStoreNames.contains(IMPORT_STORE)) createStores(database);
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Could not open local browser storage."));
+    request.onerror = () => reject(
+      request.error ?? new Error("Could not open encrypted local browser storage."),
+    );
   });
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("A browser storage request failed."));
+    request.onerror = () => reject(
+      request.error ?? new Error("An encrypted browser storage request failed."),
+    );
   });
 }
 
@@ -81,38 +135,73 @@ function transactionComplete(transaction: IDBTransaction, message: string): Prom
   });
 }
 
-function hashText(value: string): string {
-  let hash = 2_166_136_261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function resourceIdentity(resource: JsonObject): string {
-  const resourceType =
-    typeof resource.resourceType === "string" && resource.resourceType
-      ? resource.resourceType
-      : "Resource";
-  if (typeof resource.id === "string" && resource.id) return `${resourceType}/${resource.id}`;
-  return `${resourceType}/anonymous-${hashText(JSON.stringify(resource))}`;
-}
-
 function storageError(error: unknown, fallback: string): Error {
   if (error instanceof DOMException && error.name === "QuotaExceededError") {
     return new Error(
-      "This browser does not have enough local storage for the imported record. " +
+      "This browser does not have enough local storage for the encrypted record. " +
       "Remove an older import, exclude clinical-note files, or free device storage and try again.",
     );
   }
   return error instanceof Error ? error : new Error(fallback);
 }
 
+function importAad(importId: string, field: "document" | "key-check"): string {
+  return `yesyou-health:${importId}:import:${field}`;
+}
+
+function resourceAad(importId: string, sequence: string): string {
+  return `yesyou-health:${importId}:resource:${sequence}`;
+}
+
+function attachmentAad(
+  importId: string,
+  sequence: string,
+  field: "metadata" | "payload",
+): string {
+  return `yesyou-health:${importId}:attachment:${sequence}:${field}`;
+}
+
+function isStoredEncryptedImport(value: unknown): value is StoredEncryptedImport {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const stored = value as Record<string, unknown>;
+  return (
+    stored.format === ENCRYPTED_FORMAT &&
+    typeof stored.importId === "string" &&
+    typeof stored.complete === "boolean" &&
+    isEncryptionMetadata(stored.encryption) &&
+    isEncryptedPayload(stored.keyCheck) &&
+    isEncryptedPayload(stored.document)
+  );
+}
+
 async function currentImportId(database: IDBDatabase): Promise<string | undefined> {
   const transaction = database.transaction(IMPORT_STORE, "readonly");
   const value = await requestResult(transaction.objectStore(IMPORT_STORE).get(CURRENT_IMPORT_KEY));
   return typeof value === "string" ? value : undefined;
+}
+
+async function storedImport(
+  database: IDBDatabase,
+  importId: string,
+): Promise<StoredEncryptedImport | undefined> {
+  const transaction = database.transaction(IMPORT_STORE, "readonly");
+  const value: unknown = await requestResult(
+    transaction.objectStore(IMPORT_STORE).get(importId),
+  );
+  if (value === undefined) return undefined;
+  if (!isStoredEncryptedImport(value)) {
+    throw new Error(
+      "Unencrypted or unsupported local health data was found and cannot be opened. Remove it and import again.",
+    );
+  }
+  return value;
+}
+
+function activeContext(importId: string): BrowserEncryptionContext {
+  if (activeEncryption?.importId !== importId) {
+    throw new Error("This health record is locked. Enter its storage passphrase to open it.");
+  }
+  return activeEncryption.context;
 }
 
 async function deleteImportData(database: IDBDatabase, importId: string): Promise<void> {
@@ -132,7 +221,7 @@ async function deleteImportData(database: IDBDatabase, importId: string): Promis
       cursor.continue();
     };
   }
-  await transactionComplete(transaction, "Could not remove staged browser data.");
+  await transactionComplete(transaction, "Could not remove staged encrypted browser data.");
 }
 
 export async function prepareBrowserStorage(): Promise<BrowserStorageSummary> {
@@ -162,6 +251,7 @@ export async function prepareBrowserStorage(): Promise<BrowserStorageSummary> {
 
 export async function beginHealthImport(
   document: HealthExportDocument,
+  encryption: BrowserEncryptionContext,
   browserStorage?: BrowserStorageSummary,
 ): Promise<string> {
   const database = await openDatabase();
@@ -176,18 +266,29 @@ export async function beginHealthImport(
   };
 
   try {
+    const [keyCheck, encryptedDocument] = await Promise.all([
+      encryptJson(KEY_CHECK_VALUE, encryption, importAad(importId, "key-check")),
+      encryptJson(storedDocument, encryption, importAad(importId, "document")),
+    ]);
     const transaction = database.transaction(
       [IMPORT_STORE, LEGACY_EXPORT_STORE],
       "readwrite",
     );
     transaction.objectStore(IMPORT_STORE).put(
-      { importId, document: storedDocument, complete: false } satisfies StoredImport,
+      {
+        format: ENCRYPTED_FORMAT,
+        importId,
+        encryption: encryption.metadata,
+        keyCheck,
+        document: encryptedDocument,
+        complete: false,
+      } satisfies StoredEncryptedImport,
       importId,
     );
-    await transactionComplete(transaction, "Could not prepare local browser storage.");
+    await transactionComplete(transaction, "Could not prepare encrypted local browser storage.");
     return importId;
   } catch (error) {
-    throw storageError(error, "Could not prepare local browser storage.");
+    throw storageError(error, "Could not prepare encrypted local browser storage.");
   } finally {
     database.close();
   }
@@ -197,23 +298,29 @@ export async function storeHealthResourcePage(
   importId: string,
   group: string,
   resources: JsonObject[],
+  encryption: BrowserEncryptionContext,
 ): Promise<void> {
   if (!resources.length) return;
   const database = await openDatabase();
   try {
+    const encryptedResources = await Promise.all(resources.map(async (resource) => {
+      const sequence = crypto.randomUUID();
+      return {
+        importId,
+        sequence,
+        payload: await encryptJson(
+          { group, resource } satisfies EncryptedResourceContent,
+          encryption,
+          resourceAad(importId, sequence),
+        ),
+      } satisfies StoredEncryptedResource;
+    }));
     const transaction = database.transaction(RESOURCE_STORE, "readwrite");
     const store = transaction.objectStore(RESOURCE_STORE);
-    for (const resource of resources) {
-      store.put({
-        importId,
-        group,
-        identity: resourceIdentity(resource),
-        resource,
-      } satisfies StoredResource);
-    }
-    await transactionComplete(transaction, `Could not save imported ${group} data.`);
+    for (const resource of encryptedResources) store.put(resource);
+    await transactionComplete(transaction, `Could not save encrypted ${group} data.`);
   } catch (error) {
-    throw storageError(error, `Could not save imported ${group} data.`);
+    throw storageError(error, `Could not save encrypted ${group} data.`);
   } finally {
     database.close();
   }
@@ -222,25 +329,44 @@ export async function storeHealthResourcePage(
 export async function storeHealthAttachment(
   importId: string,
   attachment: BinaryAttachment,
+  encryption: BrowserEncryptionContext,
 ): Promise<void> {
   const database = await openDatabase();
+  const sequence = crypto.randomUUID();
+  const metadata: EncryptedAttachmentMetadata = {
+    key: attachment.key,
+    binaryId: attachment.binaryId,
+    contentType: attachment.contentType,
+    size: attachment.blob.size,
+    ...(attachment.sourceDocumentReference
+      ? { sourceDocumentReference: attachment.sourceDocumentReference }
+      : {}),
+    ...(attachment.title ? { title: attachment.title } : {}),
+  };
   try {
+    const [encryptedMetadata, encryptedPayload] = await Promise.all([
+      encryptJson(
+        metadata,
+        encryption,
+        attachmentAad(importId, sequence, "metadata"),
+      ),
+      attachment.blob.arrayBuffer().then((bytes) =>
+        encryptBytes(
+          bytes,
+          encryption,
+          attachmentAad(importId, sequence, "payload"),
+        )),
+    ]);
     const transaction = database.transaction(ATTACHMENT_STORE, "readwrite");
     transaction.objectStore(ATTACHMENT_STORE).put({
       importId,
-      key: attachment.key,
-      binaryId: attachment.binaryId,
-      contentType: attachment.contentType,
-      size: attachment.blob.size,
-      blob: attachment.blob,
-      ...(attachment.sourceDocumentReference
-        ? { sourceDocumentReference: attachment.sourceDocumentReference }
-        : {}),
-      ...(attachment.title ? { title: attachment.title } : {}),
-    } satisfies StoredHealthAttachment);
-    await transactionComplete(transaction, "Could not save a clinical-note attachment.");
+      sequence,
+      metadata: encryptedMetadata,
+      payload: encryptedPayload,
+    } satisfies StoredEncryptedAttachment);
+    await transactionComplete(transaction, "Could not save an encrypted clinical-note attachment.");
   } catch (error) {
-    throw storageError(error, "Could not save a clinical-note attachment.");
+    throw storageError(error, "Could not save an encrypted clinical-note attachment.");
   } finally {
     database.close();
   }
@@ -249,34 +375,39 @@ export async function storeHealthAttachment(
 export async function completeHealthImport(
   importId: string,
   errors: Record<string, string>,
+  encryption: BrowserEncryptionContext,
 ): Promise<void> {
   const database = await openDatabase();
   let previousImportId: string | undefined;
   try {
     previousImportId = await currentImportId(database);
-    const readTransaction = database.transaction(IMPORT_STORE, "readonly");
-    const stored = await requestResult(
-      readTransaction.objectStore(IMPORT_STORE).get(importId),
-    ) as StoredImport | undefined;
-    if (!stored) throw new Error("The staged browser import could not be found.");
+    const stored = await storedImport(database, importId);
+    if (!stored) throw new Error("The staged encrypted browser import could not be found.");
+    const document = await decryptJson<HealthExportDocument>(
+      stored.document,
+      encryption,
+      importAad(importId, "document"),
+    );
+    const encryptedDocument = await encryptJson(
+      { ...document, errors },
+      encryption,
+      importAad(importId, "document"),
+    );
 
     const transaction = database.transaction(
       [IMPORT_STORE, LEGACY_EXPORT_STORE],
       "readwrite",
     );
     transaction.objectStore(IMPORT_STORE).put(
-      {
-        ...stored,
-        complete: true,
-        document: { ...stored.document, errors },
-      } satisfies StoredImport,
+      { ...stored, complete: true, document: encryptedDocument } satisfies StoredEncryptedImport,
       importId,
     );
     transaction.objectStore(IMPORT_STORE).put(importId, CURRENT_IMPORT_KEY);
-    transaction.objectStore(LEGACY_EXPORT_STORE).delete(CURRENT_IMPORT_KEY);
-    await transactionComplete(transaction, "Could not finish saving the imported record.");
+    transaction.objectStore(LEGACY_EXPORT_STORE).clear();
+    await transactionComplete(transaction, "Could not finish saving the encrypted record.");
+    activeEncryption = { importId, context: encryption };
   } catch (error) {
-    throw storageError(error, "Could not finish saving the imported record.");
+    throw storageError(error, "Could not finish saving the encrypted record.");
   } finally {
     database.close();
   }
@@ -286,7 +417,7 @@ export async function completeHealthImport(
     try {
       await deleteImportData(cleanupDatabase, previousImportId);
     } catch {
-      // The new import is already committed. Cleanup is best-effort and must not invalidate it.
+      // The new encrypted import is committed. Old-record cleanup is best-effort.
     } finally {
       cleanupDatabase.close();
     }
@@ -302,8 +433,15 @@ export async function abortHealthImport(importId: string): Promise<void> {
   }
 }
 
-export async function saveHealthExport(healthExport: HealthExportDocument): Promise<void> {
-  const importId = await beginHealthImport(healthExport, healthExport.browserStorage);
+export async function saveHealthExport(
+  healthExport: HealthExportDocument,
+  encryption: BrowserEncryptionContext,
+): Promise<void> {
+  const importId = await beginHealthImport(
+    healthExport,
+    encryption,
+    healthExport.browserStorage,
+  );
   try {
     for (const [group, value] of Object.entries(healthExport.data)) {
       const resources = Array.isArray(value) ? value : [value];
@@ -314,18 +452,88 @@ export async function saveHealthExport(healthExport: HealthExportDocument): Prom
           (resource): resource is JsonObject =>
             resource !== null && typeof resource === "object" && !Array.isArray(resource),
         ),
+        encryption,
       );
     }
     await storeHealthResourcePage(
       importId,
       "PriorAuthorization",
       healthExport.priorAuthorizations,
+      encryption,
     );
-    await completeHealthImport(importId, healthExport.errors);
+    await completeHealthImport(importId, healthExport.errors, encryption);
   } catch (error) {
     await abortHealthImport(importId);
     throw error;
   }
+}
+
+export async function getHealthStorageState(): Promise<HealthStorageState> {
+  const database = await openDatabase();
+  try {
+    const importId = await currentImportId(database);
+    if (!importId) return "empty";
+    const stored = await storedImport(database, importId);
+    if (!stored?.complete) return "empty";
+    return activeEncryption?.importId === importId ? "unlocked" : "locked";
+  } finally {
+    database.close();
+  }
+}
+
+export async function unlockHealthExport(
+  passphrase: string,
+): Promise<HealthExportDocument> {
+  const database = await openDatabase();
+  try {
+    const importId = await currentImportId(database);
+    if (!importId) throw new Error("No encrypted health record is stored in this browser.");
+    const stored = await storedImport(database, importId);
+    if (!stored?.complete) throw new Error("No complete encrypted health record was found.");
+
+    const context = await unlockBrowserEncryption(passphrase, stored.encryption);
+    const keyCheck = await decryptJson<string>(
+      stored.keyCheck,
+      context,
+      importAad(importId, "key-check"),
+    );
+    if (keyCheck !== KEY_CHECK_VALUE) {
+      throw new Error("The passphrase is incorrect or the encrypted local record is damaged.");
+    }
+    activeEncryption = { importId, context };
+  } catch (error) {
+    activeEncryption = undefined;
+    throw error;
+  } finally {
+    database.close();
+  }
+
+  const healthExport = await loadHealthExport();
+  if (!healthExport) throw new Error("No complete encrypted health record was found.");
+  return healthExport;
+}
+
+async function encryptedAttachments(
+  database: IDBDatabase,
+  importId: string,
+): Promise<StoredEncryptedAttachment[]> {
+  const transaction = database.transaction(ATTACHMENT_STORE, "readonly");
+  const values: unknown[] = await requestResult(
+    transaction.objectStore(ATTACHMENT_STORE).index(IMPORT_INDEX).getAll(importId),
+  );
+  if (!values.every((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const item = value as Record<string, unknown>;
+    return (
+      item.importId === importId &&
+      typeof item.sequence === "string" &&
+      isEncryptedPayload(item.metadata) &&
+      isEncryptedPayload(item.payload)
+    );
+  })) {
+    throw new Error("The encrypted local attachments are damaged or unsupported.");
+  }
+  return values as StoredEncryptedAttachment[];
 }
 
 export async function loadHealthAttachments(
@@ -335,10 +543,25 @@ export async function loadHealthAttachments(
   try {
     const selectedImportId = importId ?? await currentImportId(database);
     if (!selectedImportId) return [];
-    const transaction = database.transaction(ATTACHMENT_STORE, "readonly");
-    return await requestResult(
-      transaction.objectStore(ATTACHMENT_STORE).index(IMPORT_INDEX).getAll(selectedImportId),
-    ) as StoredHealthAttachment[];
+    const context = activeContext(selectedImportId);
+    const storedAttachments = await encryptedAttachments(database, selectedImportId);
+    return await Promise.all(storedAttachments.map(async (attachment) => {
+      const metadata = await decryptJson<EncryptedAttachmentMetadata>(
+        attachment.metadata,
+        context,
+        attachmentAad(selectedImportId, attachment.sequence, "metadata"),
+      );
+      const plaintext = await decryptBytes(
+        attachment.payload,
+        context,
+        attachmentAad(selectedImportId, attachment.sequence, "payload"),
+      );
+      return {
+        ...metadata,
+        importId: selectedImportId,
+        blob: new Blob([plaintext], { type: metadata.contentType }),
+      };
+    }));
   } finally {
     database.close();
   }
@@ -348,48 +571,49 @@ export async function loadHealthAttachment(
   key: string,
   importId?: string,
 ): Promise<StoredHealthAttachment | undefined> {
-  const database = await openDatabase();
-  try {
-    const selectedImportId = importId ?? await currentImportId(database);
-    if (!selectedImportId) return undefined;
-    const transaction = database.transaction(ATTACHMENT_STORE, "readonly");
-    return await requestResult(
-      transaction.objectStore(ATTACHMENT_STORE).get([selectedImportId, key]),
-    ) as StoredHealthAttachment | undefined;
-  } finally {
-    database.close();
-  }
+  const attachments = await loadHealthAttachments(importId);
+  return attachments.find((attachment) => attachment.key === key);
 }
 
 export async function loadHealthExport(): Promise<HealthExportDocument | undefined> {
   const database = await openDatabase();
   try {
     const importId = await currentImportId(database);
-    if (!importId) {
-      const transaction = database.transaction(LEGACY_EXPORT_STORE, "readonly");
-      return await requestResult(
-        transaction.objectStore(LEGACY_EXPORT_STORE).get(CURRENT_IMPORT_KEY),
-      ) as HealthExportDocument | undefined;
+    if (!importId) return undefined;
+    const stored = await storedImport(database, importId);
+    if (!stored?.complete) return undefined;
+    const context = activeContext(importId);
+
+    const transaction = database.transaction(RESOURCE_STORE, "readonly");
+    const storedResources = await requestResult(
+      transaction.objectStore(RESOURCE_STORE).index(IMPORT_INDEX).getAll(importId),
+    ) as StoredEncryptedResource[];
+    if (!storedResources.every((item) =>
+      item.importId === importId &&
+      typeof item.sequence === "string" &&
+      isEncryptedPayload(item.payload))) {
+      throw new Error("The encrypted local resources are damaged or unsupported.");
     }
 
-    const transaction = database.transaction(
-      [IMPORT_STORE, RESOURCE_STORE, ATTACHMENT_STORE],
-      "readonly",
-    );
-    const imports = transaction.objectStore(IMPORT_STORE);
-    const resources = transaction.objectStore(RESOURCE_STORE).index(IMPORT_INDEX);
-    const attachments = transaction.objectStore(ATTACHMENT_STORE).index(IMPORT_INDEX);
-    const [stored, storedResources, storedAttachments] = await Promise.all([
-      requestResult(imports.get(importId)) as Promise<StoredImport | undefined>,
-      requestResult(resources.getAll(importId)) as Promise<StoredResource[]>,
-      requestResult(attachments.getAll(importId)) as Promise<StoredHealthAttachment[]>,
+    const [document, decryptedResources, storedAttachments] = await Promise.all([
+      decryptJson<HealthExportDocument>(
+        stored.document,
+        context,
+        importAad(importId, "document"),
+      ),
+      Promise.all(storedResources.map((item) =>
+        decryptJson<EncryptedResourceContent>(
+          item.payload,
+          context,
+          resourceAad(importId, item.sequence),
+        ))),
+      encryptedAttachments(database, importId),
     ]);
-    if (!stored?.complete) return undefined;
 
     const data: Record<string, unknown> = {};
     let priorAuthorizations: JsonObject[] = [];
     const groups = new Map<string, JsonObject[]>();
-    for (const item of storedResources) {
+    for (const item of decryptedResources) {
       const group = groups.get(item.group) ?? [];
       group.push(item.resource);
       groups.set(item.group, group);
@@ -400,18 +624,14 @@ export async function loadHealthExport(): Promise<HealthExportDocument | undefin
       else data[group] = groupResources;
     }
 
-    const summaries: HealthAttachmentSummary[] = storedAttachments.map((attachment) => ({
-      key: attachment.key,
-      binaryId: attachment.binaryId,
-      contentType: attachment.contentType,
-      size: attachment.size,
-      ...(attachment.sourceDocumentReference
-        ? { sourceDocumentReference: attachment.sourceDocumentReference }
-        : {}),
-      ...(attachment.title ? { title: attachment.title } : {}),
-    }));
+    const summaries = await Promise.all(storedAttachments.map((attachment) =>
+      decryptJson<EncryptedAttachmentMetadata>(
+        attachment.metadata,
+        context,
+        attachmentAad(importId, attachment.sequence, "metadata"),
+      )));
     return {
-      ...stored.document,
+      ...document,
       data,
       priorAuthorizations,
       attachments: summaries,
@@ -419,6 +639,10 @@ export async function loadHealthExport(): Promise<HealthExportDocument | undefin
   } finally {
     database.close();
   }
+}
+
+export function lockHealthExport(): void {
+  activeEncryption = undefined;
 }
 
 export async function clearHealthExport(): Promise<void> {
@@ -432,7 +656,8 @@ export async function clearHealthExport(): Promise<void> {
     transaction.objectStore(IMPORT_STORE).clear();
     transaction.objectStore(RESOURCE_STORE).clear();
     transaction.objectStore(ATTACHMENT_STORE).clear();
-    await transactionComplete(transaction, "Could not remove the imported record.");
+    await transactionComplete(transaction, "Could not remove the encrypted imported record.");
+    activeEncryption = undefined;
   } finally {
     database.close();
   }

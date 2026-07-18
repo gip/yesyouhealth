@@ -153,7 +153,7 @@ export function createExportDocument(input: {
       "The export contains only data made available by the healthcare organization through the authorized FHIR APIs.",
       "The export may differ from information displayed in MyChart.",
       "Clinical-note files are included only when selected and made available as supported FHIR Binary resources.",
-      "Browser storage is device-local and may be removed by the user or browser.",
+      "Browser storage is passphrase-encrypted and device-local, and may be removed by the user or browser.",
     ],
   };
 }

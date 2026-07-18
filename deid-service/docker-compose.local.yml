@@ -1,0 +1,41 @@
+# Local development: builds the image in place, no TEE required.
+# `docker compose -f docker-compose.local.yml up` — /attestation returns
+# {"tee": false} because the dstack guest-agent socket is not mounted.
+#
+# First boot pulls the ollama model (~18GB for qwen3:30b) into the
+# ollama-models volume; /health reports starting -> pulling -> warming ->
+# ready. Until then /scrub answers via the rules engine.
+services:
+  deid:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      AGE_STRATEGY: ${AGE_STRATEGY:-fixed_30}
+      SCRUB_FREETEXT: ${SCRUB_FREETEXT:-false}
+      RETURN_MAP: ${RETURN_MAP:-false}
+      DEID_ENGINE: ${DEID_ENGINE:-llm}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:30b}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300}
+    depends_on:
+      ollama:
+        # service_started, NOT service_healthy: deid must boot and degrade
+        # to the rules engine even when ollama is sick.
+        condition: service_started
+
+  ollama:
+    image: ollama/ollama:0.9.6 # pin >= 0.9 for the "think" flag
+    ports:
+      - "11434:11434" # optional, for host debugging
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  ollama-models:

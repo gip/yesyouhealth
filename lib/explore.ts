@@ -443,7 +443,7 @@ export function renderedFields(resource: JsonObject): RenderedField[] {
       add(fields, "Content type", text(resource.contentType));
       add(fields, "File size", fileSize(resource.size));
       add(fields, "Source document", text(resource.sourceDocumentReference));
-      add(fields, "Storage", "Stored locally in this browser; included in downloaded exports.");
+      add(fields, "Storage", "Stored encrypted in this browser; included in decrypted downloads.");
       break;
     }
     default: {

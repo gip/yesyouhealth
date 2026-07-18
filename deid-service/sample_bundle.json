@@ -1,0 +1,98 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "timestamp": "2024-03-01T12:00:00Z",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-1",
+        "identifier": [
+          {
+            "system": "http://hospital.smarthealth.org/mrn",
+            "type": { "text": "Medical Record Number" },
+            "value": "MRN-483920"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "text": "Maria Elena Gonzalez",
+            "family": "Gonzalez",
+            "given": ["Maria", "Elena"]
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1987-04-12",
+        "telecom": [
+          { "system": "phone", "use": "mobile", "value": "(415) 555-0132" },
+          { "system": "email", "value": "maria.gonzalez@example.com" }
+        ],
+        "address": [
+          {
+            "use": "home",
+            "text": "742 Evergreen Terrace, San Francisco, CA, 94117",
+            "line": ["742 Evergreen Terrace"],
+            "city": "San Francisco",
+            "state": "CA",
+            "postalCode": "94117",
+            "country": "US"
+          }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-hr-1",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://loinc.org", "code": "8867-4", "display": "Heart rate" }
+          ]
+        },
+        "subject": { "reference": "Patient/patient-1" },
+        "effectiveDateTime": "2024-01-10T09:30:00Z",
+        "issued": "2024-01-10T10:00:00Z",
+        "valueQuantity": {
+          "value": 72,
+          "unit": "beats/minute",
+          "system": "http://unitsofmeasure.org",
+          "code": "/min"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-hr-2",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://loinc.org", "code": "8867-4", "display": "Heart rate" }
+          ]
+        },
+        "subject": { "reference": "Patient/patient-1" },
+        "effectiveDateTime": "2024-02-10T09:30:00Z",
+        "issued": "2024-02-10T10:15:00Z",
+        "valueQuantity": {
+          "value": 68,
+          "unit": "beats/minute",
+          "system": "http://unitsofmeasure.org",
+          "code": "/min"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-note-1",
+        "status": "final",
+        "code": { "text": "Clinical note" },
+        "subject": { "reference": "Patient/patient-1" },
+        "effectiveDateTime": "2024-02-10T09:45:00Z",
+        "valueString": "Patient Maria Gonzalez reports intermittent palpitations since early January. Advised to monitor symptoms; follow-up call scheduled at (415) 555-0132."
+      }
+    }
+  ]
+}
