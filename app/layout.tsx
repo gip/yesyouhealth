@@ -21,7 +21,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <span>YesYou Health</span>
           </Link>
           <nav aria-label="Primary navigation">
-            {session?.user?.role === "patient" ? <Link href="/explore">Explore</Link> : null}
+            {session?.user?.role === "doctor" ? null : <Link href="/explore">Explore</Link>}
             <Link href="/literature">Literature</Link>
             <Link href="/terms">Terms</Link>
             <Link href="/privacy">Privacy</Link>

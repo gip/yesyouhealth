@@ -28,7 +28,9 @@ export default async function Home() {
             made available by your provider, encrypted on your device with a passphrase you choose.
           </p>
           <div className="actions">
-            {role === "patient" ? (
+            {role === "doctor" ? (
+              <Link className="button primary" href="/doctor">Go to your dashboard</Link>
+            ) : (
               <ConnectButton
                 defaultClientId={requireEpicClientId()}
                 defaultProviderId={DEFAULT_PROVIDER_ID}
@@ -36,12 +38,12 @@ export default async function Home() {
                 configuredRedirectUri={configuredEpicRedirectUri()}
                 providers={providers}
               />
-            ) : role === "doctor" ? (
-              <Link className="button primary" href="/doctor">Go to your dashboard</Link>
-            ) : (
-              <Link className="button primary" href="/signup">Create an account</Link>
             )}
-            <Link className="button secondary" href="/terms">Review the terms</Link>
+            {session?.user ? (
+              <Link className="button secondary" href="/terms">Review the terms</Link>
+            ) : (
+              <Link className="button secondary" href="/signup">Create an account</Link>
+            )}
           </div>
           <p className="consent-note">
             By continuing, you agree to the <Link href="/terms">Terms</Link> and acknowledge the <Link href="/privacy">Privacy Notice</Link>.

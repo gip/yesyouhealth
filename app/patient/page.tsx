@@ -14,20 +14,19 @@ import {
 
 export default async function PatientPage() {
   const session = await auth();
-  if (!session?.user) redirect("/signin?callbackUrl=%2Fpatient");
-  if (session.user.role !== "patient") redirect("/dashboard");
+  if (session?.user && session.user.role !== "patient") redirect("/dashboard");
 
-  const [allFields, myFields] = await Promise.all([
-    listFields(),
-    fieldsForUser(session.user.id),
-  ]);
+  const patientId = session?.user?.id ?? null;
+  const [allFields, myFields] = patientId
+    ? await Promise.all([listFields(), fieldsForUser(patientId)])
+    : [[], []];
   const providers = selectableProviders(process.env.NODE_ENV === "development");
 
   return (
     <main className="dashboard">
       <header className="dashboard-header">
         <p className="eyebrow">Patient dashboard</p>
-        <h1>Welcome{session.user.name ? `, ${session.user.name}` : ""}</h1>
+        <h1>Welcome{session?.user?.name ? `, ${session.user.name}` : ""}</h1>
         <p className="auth-note">
           Import your record from MyChart, keep it encrypted on this device, and follow the
           literature for the fields you care about.
@@ -38,7 +37,7 @@ export default async function PatientPage() {
           <h2>Your health record</h2>
           <p className="auth-note">
             Connect MyChart to import a read-only copy of your record. It is encrypted in your
-            browser with a passphrase you choose and never touches our server.
+            browser with a passphrase you choose and never touches our server. No account needed.
           </p>
           <div className="dashboard-actions">
             <ConnectButton
@@ -51,7 +50,20 @@ export default async function PatientPage() {
             <Link className="button secondary" href="/explore">Explore your record</Link>
           </div>
         </section>
-        <PatientFieldsCard allFields={allFields} myFields={myFields} />
+        {patientId ? (
+          <PatientFieldsCard allFields={allFields} myFields={myFields} />
+        ) : (
+          <section className="dashboard-card" aria-label="Your fields">
+            <h2>Your fields</h2>
+            <p className="auth-note">
+              Sign in to follow the fields you care about and get matching literature.
+            </p>
+            <div className="dashboard-actions">
+              <Link className="button secondary" href="/signin?callbackUrl=%2Fpatient">Sign in</Link>
+              <Link className="text-button" href="/literature">Browse all literature</Link>
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );
