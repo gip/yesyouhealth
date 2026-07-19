@@ -387,6 +387,60 @@ export function StudyClient() {
             longitudinal history into clear, personalized next steps—not to replace a
             clinician&apos;s judgment or provide emergency medical advice.
           </p>
+          <div className="next-step-preview" aria-label="Future four-week action plan preview">
+            <div className="next-step-preview-head">
+              <span className="next-step-cadence">Every 4 weeks</span>
+              <div>
+                <h3>Your draft action plan</h3>
+                <p>
+                  The future model would review new symptoms, medications, coverage
+                  decisions, labs, and scheduled care, then prioritize a short list of
+                  actions for the next four weeks.
+                </p>
+              </div>
+            </div>
+            <div className="next-step-cycle" aria-label="Action plan cycle">
+              <span><strong>1</strong> Review what changed</span>
+              <span aria-hidden="true">→</span>
+              <span><strong>2</strong> Explain why it matters</span>
+              <span aria-hidden="true">→</span>
+              <span><strong>3</strong> Propose next actions</span>
+              <span aria-hidden="true">→</span>
+              <span><strong>4</strong> Patient decides</span>
+            </div>
+            <ul className="next-step-actions">
+              <li>
+                <span className="next-step-action-type">Care team</span>
+                <strong>Contact your clinician through MyChart</strong>
+                <p>Draft the questions or symptom update worth sending to the care team.</p>
+              </li>
+              <li>
+                <span className="next-step-action-type">Access</span>
+                <strong>Follow up on medication coverage</strong>
+                <p>Suggest contacting the insurer or asking the care team about a refill or authorization.</p>
+              </li>
+              <li>
+                <span className="next-step-action-type">Medication</span>
+                <strong>Review the medication plan</strong>
+                <p>Flag adherence, side effects, or a possible adjustment to discuss with the prescribing clinician.</p>
+              </li>
+              <li>
+                <span className="next-step-action-type">Procedure</span>
+                <strong>Plan a colonoscopy</strong>
+                <p>Surface when surveillance may be due and help prepare questions about scheduling.</p>
+              </li>
+              <li>
+                <span className="next-step-action-type">Monitoring</span>
+                <strong>Complete or ask about labs</strong>
+                <p>Highlight ordered tests or routine monitoring that may need follow-up.</p>
+              </li>
+            </ul>
+            <p className="next-step-boundary">
+              The model would explain the evidence behind each suggestion and its
+              urgency. It would not send messages, contact an insurer, schedule care,
+              order tests, or change medication without the patient and care team.
+            </p>
+          </div>
         </section>
       ) : view === "deid" && record.deid ? (
         <DeidRecordView deid={record.deid} />
