@@ -129,7 +129,7 @@ export function StudyClient() {
   const [record, setRecord] = useState<StudyRecord>();
   const [progress, setProgress] = useState<StudyProgressUpdate>();
   const [elapsed, setElapsed] = useState(0);
-  const [view, setView] = useState<"study" | "deid">("study");
+  const [view, setView] = useState<"study" | "deid" | "next">("study");
   const [error, setError] = useState<string>();
   const [savingComment, setSavingComment] = useState(false);
   const [commentTarget, setCommentTarget] = useState<number | "general">();
@@ -364,10 +364,31 @@ export function StudyClient() {
           >
             De-identified record
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "next"}
+            className={view === "next" ? "active" : ""}
+            onClick={() => setView("next")}
+          >
+            Next step
+          </button>
         </div>
       ) : null}
 
-      {view === "deid" && record.deid ? (
+      {view === "next" ? (
+        <section className="study-summary study-next-step" aria-label="Next step">
+          <p className="eyebrow">Coming in the future</p>
+          <h2>Understand what to do next.</h2>
+          <p>
+            One day, this space will use a dedicated model to help patients understand
+            what may be happening in their health record and suggest practical actions
+            they could discuss with their care team. The goal is to turn a complex
+            longitudinal history into clear, personalized next steps—not to replace a
+            clinician&apos;s judgment or provide emergency medical advice.
+          </p>
+        </section>
+      ) : view === "deid" && record.deid ? (
         <DeidRecordView deid={record.deid} />
       ) : (
         <>
