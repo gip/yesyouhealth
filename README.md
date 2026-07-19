@@ -110,6 +110,12 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Development includes Epic Sandbox as an additional organization choice and labels it as synthetic test data. UCSF remains selected by default.
 
+The current frontend is configured as a timed demo. It reveals the bundled
+de-identified John Smith record after one minute, then encrypts and stores the
+bundled longitudinal study two minutes and fifteen seconds after generation
+started. The static responses live under `public/demo/`; the demo does not call
+the de-identification or longitudinal AI services.
+
 ## Healthcare organization registry
 
 Supported organizations are allowlisted in `lib/providers.ts`. Each profile

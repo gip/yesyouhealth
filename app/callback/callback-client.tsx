@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { DeidRecordView } from "@/app/deid-record-view";
 import { StoragePassphraseForm } from "@/app/storage-passphrase-form";
 import {
   createExportDocument,
@@ -33,6 +34,7 @@ import {
   type ProviderProfile,
 } from "@/lib/providers";
 import { generateStudy } from "@/lib/study-pipeline";
+import type { DeidRecordResult } from "@/lib/study";
 
 type ExportStatus =
   | "validating"
@@ -99,6 +101,7 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
   const [error, setError] = useState<string>();
   const [progress, setProgress] = useState<ImportProgress>();
   const [jobStatus, setJobStatus] = useState<string>();
+  const [deid, setDeid] = useState<DeidRecordResult>();
   const [creatingKey, setCreatingKey] = useState(false);
 
   useEffect(() => {
@@ -211,6 +214,7 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
           onProgress: (update) => {
             setStatus(update.stage === "deidentifying" ? "deidentifying" : "summarizing");
             setJobStatus(update.jobStatus);
+            if (update.deid) setDeid(update.deid);
           },
         });
         setStatus("complete");
@@ -242,7 +246,7 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
       ? undefined
       : STATUS_COPY[status];
   return (
-    <main className="callback-page">
+    <main className={`callback-page${deid ? " callback-page-with-record" : ""}`}>
       <section className="callback-card" aria-live="polite">
         {status === "complete" ? <div className="success-mark" aria-hidden="true">✓</div> : null}
         {!["complete", "error", "passphrase"].includes(status)
@@ -300,6 +304,7 @@ export function CallbackClient({ defaultClientId }: { defaultClientId: string })
           <Link className="button secondary" href="/">Return home</Link>
         ) : null}
       </section>
+      {deid ? <DeidRecordView deid={deid} /> : null}
     </main>
   );
 }

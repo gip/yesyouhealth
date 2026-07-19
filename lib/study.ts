@@ -6,7 +6,9 @@ export type StudyCategory =
   | "lab"
   | "medication"
   | "prior_auth_denied"
+  | "prior_auth_approved"
   | "procedure"
+  | "service_request"
   | "self_evaluation"
   | "encounter"
   | "immunization"
@@ -72,7 +74,9 @@ export const STUDY_CATEGORY_LABELS: Record<StudyCategory, string> = {
   lab: "Lab result",
   medication: "Medication",
   prior_auth_denied: "Prior auth denied",
+  prior_auth_approved: "Prior auth approved",
   procedure: "Procedure",
+  service_request: "Service request",
   self_evaluation: "Self-evaluation",
   encounter: "Encounter",
   immunization: "Immunization",

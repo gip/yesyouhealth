@@ -133,6 +133,7 @@ h1 { max-width: 760px; margin: 0; font-family: var(--serif); font-size: var(--te
 
 /* Callback */
 .callback-page { min-height: 620px; display: grid; place-items: center; padding-top: 72px; padding-bottom: 96px; }
+.callback-page-with-record { gap: 28px; place-items: stretch; }
 .callback-card { width: min(660px, 100%); padding: 52px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); text-align: center; }
 .callback-card h1 { margin: 0 auto; font-size: var(--text-display-md); line-height: 1.08; }
 .callback-card .eyebrow { margin-top: 22px; }
@@ -382,3 +383,4 @@ h1 { max-width: 760px; margin: 0; font-family: var(--serif); font-size: var(--te
 .deid-group summary { display: flex; align-items: center; gap: 10px; padding: 12px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .deid-count { padding: 2px 9px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--paper); color: var(--muted); font-family: var(--mono); font-size: var(--text-xs); font-weight: 500; }
 .deid-json { margin: 0 16px 14px; padding: 14px; max-height: 340px; overflow: auto; border-radius: var(--radius-sm); background: var(--code-bg); color: var(--code-ink); font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.explore-empty > .deid-record { width: min(1100px, 100%); margin-top: 30px; text-align: left; }

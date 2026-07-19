@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
+import { DeidRecordView } from "@/app/deid-record-view";
 import { StoragePassphraseForm } from "@/app/storage-passphrase-form";
 import {
   getHealthStorageState,
@@ -17,7 +18,6 @@ import {
 } from "@/lib/study-pipeline";
 import {
   STUDY_CATEGORY_LABELS,
-  type DeidRecordResult,
   type StudyComment,
   type StudyRecord,
 } from "@/lib/study";
@@ -85,51 +85,6 @@ function renderNarrative(markdown: string): ReactNode[] {
   }
   flush();
   return nodes;
-}
-
-function DeidRecordView({ deid }: { deid: DeidRecordResult }) {
-  const groups = useMemo(() => {
-    const map = new Map<string, object[]>();
-    const bundle = deid.resource as { entry?: unknown[] } | null | undefined;
-    for (const entryValue of Array.isArray(bundle?.entry) ? bundle.entry : []) {
-      const resource = (entryValue as { resource?: unknown } | null)?.resource;
-      if (!resource || typeof resource !== "object") continue;
-      const type = String(
-        (resource as { resourceType?: unknown }).resourceType ?? "Other",
-      );
-      map.set(type, [...(map.get(type) ?? []), resource]);
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [deid]);
-
-  return (
-    <section className="study-summary deid-record" aria-label="De-identified record">
-      <h2>De-identified record</h2>
-      <p className="auth-note">
-        This is the version of your record produced by the de-identification service
-        {deid.engine ? ` (${deid.engine === "llm" ? "local AI engine" : "rules engine"})` : ""} —
-        names, birth dates, and other identifying details are replaced with realistic
-        surrogates, and this is what the AI study was built from.
-      </p>
-      {groups.length ? (
-        groups.map(([type, resources]) => (
-          <details key={type} className="deid-group">
-            <summary>
-              {type}
-              <span className="deid-count">{resources.length}</span>
-            </summary>
-            {resources.map((resource, index) => (
-              <pre key={index} className="deid-json"><code>
-                {JSON.stringify(resource, null, 2)}
-              </code></pre>
-            ))}
-          </details>
-        ))
-      ) : (
-        <pre className="deid-json"><code>{JSON.stringify(deid.resource, null, 2)}</code></pre>
-      )}
-    </section>
-  );
 }
 
 function CommentList({
@@ -214,10 +169,10 @@ export function StudyClient() {
     }
   }
 
-  // Seconds counter for the active pipeline stage, reset on stage change.
-  const activeStage = progress?.stage;
+  // Total seconds since this generation run started.
+  const generationActive = Boolean(progress);
   useEffect(() => {
-    if (!activeStage) return;
+    if (!generationActive) return;
     setElapsed(0);
     const startedAt = Date.now();
     const timer = setInterval(
@@ -225,7 +180,7 @@ export function StudyClient() {
       1_000,
     );
     return () => clearInterval(timer);
-  }, [activeStage]);
+  }, [generationActive]);
 
   async function generate() {
     setError(undefined);
@@ -337,6 +292,7 @@ export function StudyClient() {
             : "Submitting job · "}
           {elapsed}s elapsed · status checked every 3 seconds
         </p>
+        {progress.deid ? <DeidRecordView deid={progress.deid} /> : null}
       </main>
     );
   }
@@ -372,8 +328,10 @@ export function StudyClient() {
             <time dateTime={record.createdAt}>
               {new Date(record.createdAt).toLocaleString()}
             </time>
-            {record.model ? ` · ${record.model}` : ""} · Dates are anonymized: the earliest event
-            is shown as 2000-01-01 and all other dates keep their true spacing.
+            {record.model && record.model !== "demo" ? ` · ${record.model}` : ""}
+            {record.model === "demo"
+              ? " · Demo response with fixed example dates."
+              : " · Dates are anonymized: the earliest event is shown as 2000-01-01 and all other dates keep their true spacing."}
           </p>
         </div>
         <div className="dashboard-actions">

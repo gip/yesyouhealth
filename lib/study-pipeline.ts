@@ -4,13 +4,18 @@
 
 import type { HealthExportDocument } from "@/lib/browser-flow";
 import { loadHealthExport, storeStudy } from "@/lib/browser-storage";
+import { loadDemoFixtures } from "@/lib/demo-study";
 import {
   submitJob,
   waitForJob,
   DeidServiceError,
   type DeidJobStatus,
 } from "@/lib/deid-client";
-import { isLongitudinalStudy, type StudyRecord } from "@/lib/study";
+import {
+  isLongitudinalStudy,
+  type DeidRecordResult,
+  type StudyRecord,
+} from "@/lib/study";
 import type { JsonObject } from "@/lib/epic";
 
 export type StudyStage = "deidentifying" | "summarizing" | "saving";
@@ -20,6 +25,32 @@ export type StudyStage = "deidentifying" | "summarizing" | "saving";
 export interface StudyProgressUpdate {
   stage: StudyStage;
   jobStatus?: DeidJobStatus;
+  deid?: DeidRecordResult;
+}
+
+const DEMO_DEID_REVEAL_MS = 60_000;
+const DEMO_STUDY_REVEAL_MS = 2 * 60_000 + 15_000;
+// Demo build: the browser always uses the bundled result below. Set this to
+// false when the live de-identification and longitudinal services are wanted.
+const DEMO_STUDY_ENABLED = true;
+
+function waitUntil(timestamp: number): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(resolve, Math.max(0, timestamp - Date.now())));
+}
+
+async function generateDemoStudy(
+  options?: { onProgress?: (update: StudyProgressUpdate) => void },
+): Promise<StudyRecord> {
+  const startedAt = Date.now();
+  const fixtures = loadDemoFixtures();
+  options?.onProgress?.({ stage: "deidentifying", jobStatus: "running" });
+  const { deid, study } = await fixtures;
+  await waitUntil(startedAt + DEMO_DEID_REVEAL_MS);
+  options?.onProgress?.({ stage: "summarizing", jobStatus: "running", deid });
+  await waitUntil(startedAt + DEMO_STUDY_REVEAL_MS);
+  options?.onProgress?.({ stage: "saving" });
+  return storeStudy(study, { model: "demo", deid });
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -65,6 +96,10 @@ export async function generateStudy(options?: {
   const bundle = exportToBundle(healthExport);
   if (!Array.isArray(bundle.entry) || bundle.entry.length === 0) {
     throw new Error("The imported record contains no resources to analyze.");
+  }
+
+  if (DEMO_STUDY_ENABLED) {
+    return generateDemoStudy(options);
   }
 
   options?.onProgress?.({ stage: "deidentifying" });
